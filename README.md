@@ -1,4 +1,4 @@
-# Mars Rover Command Center
+# Rover Command Center
 
 A real-time control interface for the Anveshak Mars Rover with WiFi command dispatching.
 
