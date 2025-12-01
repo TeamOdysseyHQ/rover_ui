@@ -17,8 +17,12 @@ export function connectToRover(ip) {
 		
 		ws.onopen = () => {
 			console.log('✅ Connected to rover at', ip);
+			console.log('WebSocket ready state:', ws.readyState);
 			connectionStatus.set('connected');
 			roverIP.set(ip);
+			
+			// Send test message
+			ws.send(JSON.stringify({ command: 'CONNECTION_TEST', data: {}, timestamp: new Date().toISOString() }));
 		};
 		
 		ws.onclose = () => {
@@ -49,10 +53,23 @@ export function disconnectFromRover() {
 	roverIP.set('');
 }
 
+// Fallback UUID generator for older browsers
+function generateUUID() {
+	if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+		return crypto.randomUUID();
+	}
+	// Fallback for older browsers
+	return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+		const r = Math.random() * 16 | 0;
+		const v = c === 'x' ? r : (r & 0x3 | 0x8);
+		return v.toString(16);
+	});
+}
+
 export function dispatchCommand(command, data = {}) {
 	const timestamp = new Date().toISOString();
 	const commandEntry = {
-		id: crypto.randomUUID(),
+		id: generateUUID(),
 		command,
 		data,
 		timestamp,

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "vite dev",
+    "dev": "vite dev --host",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -19,6 +19,7 @@
   },
   "type": "module",
   "dependencies": {
-    "lucide-svelte": "^0.294.0"
+    "lucide-svelte": "^0.294.0",
+    "ws": "^8.18.3"
   }
 }

@@ -9,6 +9,7 @@
 	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import ConnectionPanel from '$lib/components/ConnectionPanel.svelte';
+	import CommandLog from '$lib/components/CommandLog.svelte';
 	
 	let showAutoModal = false;
 	let ackermanMode = true;
@@ -93,6 +94,7 @@
 			<!-- Column 1: Primary Driving & Navigation -->
 			<div class="space-y-6 xl:col-span-1">
 				<ConnectionPanel />
+				<CommandLog />
 				
 				<div class="card">
 					<div class="p-4 border-b border-slate-700">
