@@ -1,14 +1,14 @@
 <script>
-	import { commandHistory } from '$lib/stores/commandStore';
+	import { commandHistory } from '$lib/stores/apiStore';
 	import { Terminal } from 'lucide-svelte';
 	
 	$: recentCommands = $commandHistory.slice(-10).reverse();
 	
 	function getStatusColor(status) {
 		switch(status) {
-			case 'transmitted': return 'text-green-400';
-			case 'failed': return 'text-red-400';
-			case 'local_only': return 'text-amber-400';
+			case 'success': return 'text-green-400';
+			case 'error': return 'text-red-400';
+			case 'sent': return 'text-amber-400';
 			default: return 'text-slate-400';
 		}
 	}
@@ -22,12 +22,12 @@
 	<div class="p-4 border-b border-slate-700">
 		<h2 class="font-semibold text-lg text-white flex items-center gap-2">
 			<Terminal class="text-sky-400" />
-			Command Log
+			API Activity Log
 		</h2>
 	</div>
 	<div class="p-4">
 		{#if recentCommands.length === 0}
-			<p class="text-slate-400 text-sm text-center py-4">No commands yet</p>
+			<p class="text-slate-400 text-sm text-center py-4">No API calls yet</p>
 		{:else}
 			<div class="space-y-2 max-h-64 overflow-y-auto">
 				{#each recentCommands as cmd}
@@ -41,9 +41,9 @@
 						<div class="text-slate-500 text-[10px]">
 							{formatTime(cmd.timestamp)}
 						</div>
-						{#if Object.keys(cmd.data).length > 0}
+						{#if cmd.response}
 							<div class="text-slate-400 mt-1">
-								{JSON.stringify(cmd.data)}
+								{JSON.stringify(cmd.response).substring(0, 100)}...
 							</div>
 						{/if}
 					</div>

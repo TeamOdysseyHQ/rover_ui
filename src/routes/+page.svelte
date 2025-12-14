@@ -2,9 +2,10 @@
 	import { 
 		Bot, Route, Archive, Download, Construction, ArrowDownUp, TestTubes, 
 		RotateCcw, RotateCw, BatteryCharging, Zap, Thermometer, Antenna,
-		ScanLine, Aperture, Maximize, FileDown
+		ScanLine, Aperture, Maximize, FileDown, AlertCircle, CheckCircle
 	} from 'lucide-svelte';
-	import { dispatchCommand, connectionStatus } from '$lib/stores/commandStore';
+	import { apiStatus, commandHistory, logCommand } from '$lib/stores/apiStore';
+	import * as roverApi from '$lib/services/roverApi';
 	import Joystick from '$lib/components/Joystick.svelte';
 	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
 	import Modal from '$lib/components/Modal.svelte';
@@ -12,72 +13,215 @@
 	import CommandLog from '$lib/components/CommandLog.svelte';
 	
 	let showAutoModal = false;
+	let showReportsModal = false;
+	let showWaypointsModal = false;
+	let showRouteAnalysisModal = false;
 	let ackermanMode = true;
 	let independentMode = false;
 	let drillSpeed = 50;
 	let testTubeSlot = 3;
 	
-	function handleJoystickMove(event) {
-		dispatchCommand('JOYSTICK_MOVE', { x: event.detail.x, y: event.detail.y });
+	// Feedback message state
+	let feedbackMessage = '';
+	let feedbackType = 'success'; // 'success' | 'error' | 'info'
+	let showFeedback = false;
+	
+	// Data state
+	let waypoints = [];
+	let reports = [];
+	let routeAnalysis = null;
+	let diagnosticsResult = null;
+	
+	// Helper function to show feedback messages
+	function showFeedbackMessage(message, type = 'success') {
+		feedbackMessage = message;
+		feedbackType = type;
+		showFeedback = true;
+		
+		setTimeout(() => {
+			showFeedback = false;
+		}, 5000);
 	}
 	
+	// NOT IMPLEMENTED: Joystick control (no backend endpoint)
+	function handleJoystickMove(event) {
+		console.log('Joystick move (not implemented in backend):', event.detail.x, event.detail.y);
+		logCommand({ type: 'JOYSTICK_MOVE', data: { x: event.detail.x, y: event.detail.y } }, 'sent');
+	}
+	
+	// NOT IMPLEMENTED: Steering mode toggle (no backend endpoint)
 	function toggleSteeringMode(mode) {
 		if (mode === 'ackerman') {
 			ackermanMode = !ackermanMode;
-			dispatchCommand('STEERING_MODE', { mode: 'ackerman', enabled: ackermanMode });
+			console.log('Steering mode (Ackerman - not implemented in backend):', ackermanMode);
 		} else {
 			independentMode = !independentMode;
-			dispatchCommand('STEERING_MODE', { mode: 'independent', enabled: independentMode });
+			console.log('Steering mode (Independent - not implemented in backend):', independentMode);
 		}
 	}
 	
+	// NOT IMPLEMENTED: Drill speed control (no backend endpoint)
 	function handleDrillSpeed(value) {
 		drillSpeed = value;
-		dispatchCommand('DRILL_SPEED', { speed: value });
+		console.log('Drill speed (not implemented in backend):', value);
+		logCommand({ type: 'DRILL_SPEED', data: { speed: value } }, 'sent');
 	}
 	
+	// NOT IMPLEMENTED: Test tube rotation (no backend endpoint)
 	function rotateTestTube(direction) {
 		testTubeSlot = direction === 'left' 
 			? Math.max(1, testTubeSlot - 1)
 			: Math.min(6, testTubeSlot + 1);
-		dispatchCommand('TEST_TUBE_ROTATE', { slot: testTubeSlot, direction });
+		console.log('Test tube slot (not implemented in backend):', testTubeSlot, 'direction:', direction);
 	}
 	
-	function initiateAutonomous() {
-		dispatchCommand('AUTONOMOUS_MODE', { latitude: gpsLat, longitude: gpsLon });
-		showAutoModal = false;
+	// IMPLEMENTED: Add waypoint for autonomous navigation
+	async function initiateAutonomous() {
+		try {
+			const data = {
+				latitude: parseFloat(gpsLat),
+				longitude: parseFloat(gpsLon),
+				description: 'Autonomous destination',
+				waypoint_type: 'destination'
+			};
+			
+			logCommand({ type: 'ADD_WAYPOINT', data }, 'sent');
+			const result = await roverApi.addWaypoint(data);
+			logCommand({ type: 'ADD_WAYPOINT', data }, 'success', result);
+			
+			showFeedbackMessage(`Waypoint added: ${result.waypoint_id}`, 'success');
+			showAutoModal = false;
+		} catch (error) {
+			logCommand({ type: 'ADD_WAYPOINT', data: { latitude: gpsLat, longitude: gpsLon } }, 'error', error.message);
+			showFeedbackMessage(`Failed to add waypoint: ${error.message}`, 'error');
+		}
+	}
+	
+	// IMPLEMENTED: Capture test image
+	async function captureTestImage() {
+		try {
+			logCommand({ type: 'CAPTURE_TEST_DATA' }, 'sent');
+			const result = await roverApi.captureTestData({
+				latitude: gpsLat,
+				longitude: gpsLon,
+				camera: 'test_camera'
+			});
+			logCommand({ type: 'CAPTURE_TEST_DATA' }, 'success', result);
+			
+			showFeedbackMessage(`Test image captured: ${result.filename}`, 'success');
+		} catch (error) {
+			logCommand({ type: 'CAPTURE_TEST_DATA' }, 'error', error.message);
+			showFeedbackMessage(`Failed to capture image: ${error.message}`, 'error');
+		}
+	}
+	
+	// IMPLEMENTED: Generate comprehensive report
+	async function generateFullReport() {
+		try {
+			logCommand({ type: 'GENERATE_REPORT' }, 'sent');
+			const result = await roverApi.generateComprehensiveReport();
+			logCommand({ type: 'GENERATE_REPORT' }, 'success', result);
+			
+			showFeedbackMessage(`Report generated: ${result.report_file}`, 'success');
+		} catch (error) {
+			logCommand({ type: 'GENERATE_REPORT' }, 'error', error.message);
+			showFeedbackMessage(`Failed to generate report: ${error.message}`, 'error');
+		}
+	}
+	
+	// IMPLEMENTED: Run ROS2 diagnostics
+	async function runDiagnostics() {
+		try {
+			logCommand({ type: 'RUN_DIAGNOSTICS' }, 'sent');
+			const result = await roverApi.runDoctor();
+			logCommand({ type: 'RUN_DIAGNOSTICS' }, 'success', result);
+			
+			diagnosticsResult = result;
+			showFeedbackMessage('Diagnostics completed', 'success');
+		} catch (error) {
+			logCommand({ type: 'RUN_DIAGNOSTICS' }, 'error', error.message);
+			showFeedbackMessage(`Diagnostics failed: ${error.message}`, 'error');
+		}
+	}
+	
+	// IMPLEMENTED: Load waypoints
+	async function loadWaypoints() {
+		try {
+			const result = await roverApi.getWaypoints();
+			waypoints = result.waypoints || [];
+			showWaypointsModal = true;
+		} catch (error) {
+			showFeedbackMessage(`Failed to load waypoints: ${error.message}`, 'error');
+		}
+	}
+	
+	// IMPLEMENTED: Load reports
+	async function loadReports() {
+		try {
+			const result = await roverApi.listReports();
+			reports = result.reports || [];
+			showReportsModal = true;
+		} catch (error) {
+			showFeedbackMessage(`Failed to load reports: ${error.message}`, 'error');
+		}
+	}
+	
+	// IMPLEMENTED: Load route analysis
+	async function loadRouteAnalysis() {
+		try {
+			const result = await roverApi.getRouteAnalysis();
+			routeAnalysis = result;
+			showRouteAnalysisModal = true;
+		} catch (error) {
+			showFeedbackMessage(`Failed to load route analysis: ${error.message}`, 'error');
+		}
 	}
 	
 	let siteReason = '';
-	let gpsLat = '';
-	let gpsLon = '';
+	let gpsLat = '16.5062';
+	let gpsLon = '80.6480';
 	
 	const cameras = [
-		{ id: 'CAM_FRONT_HAZ', label: 'CAM_FRONT_HAZ', checked: true },
-		{ id: 'CAM_REAR_HAZ', label: 'CAM_REAR_HAZ', checked: false },
-		{ id: 'CAM_SCIENCE_ARM', label: 'CAM_SCIENCE_ARM', checked: false },
-		{ id: 'CAM_MAST_NAV', label: 'CAM_MAST_NAV', checked: false },
-		{ id: 'MICROSCOPE_IMAGER', label: 'MICROSCOPE_IMAGER', checked: false }
+		{ id: 'front', label: 'CAM_FRONT_HAZ', checked: true },
+		{ id: 'rear', label: 'CAM_REAR_HAZ', checked: false },
+		{ id: 'arm', label: 'CAM_SCIENCE_ARM', checked: false },
+		{ id: 'mast', label: 'CAM_MAST_NAV', checked: false },
+		{ id: 'microscope', label: 'MICROSCOPE_IMAGER', checked: false }
 	];
 	
-	const wheels = ['Front Left', 'Front Right', 'Rear Left', 'Rear Right'];
-	let wheelSpeeds = { 'Front Left': 100, 'Front Right': 100, 'Rear Left': 100, 'Rear Right': 100 };
-	let wheelDirections = { 'Front Left': 0, 'Front Right': 0, 'Rear Left': 0, 'Rear Right': 0 };
+	const wheels = ['front_left', 'front_right', 'rear_left', 'rear_right'];
+	let wheelSpeeds = { 'front_left': 100, 'front_right': 100, 'rear_left': 100, 'rear_right': 100 };
+	let wheelDirections = { 'front_left': 0, 'front_right': 0, 'rear_left': 0, 'rear_right': 0 };
 
 </script>
 
 <div class="p-4 sm:p-6 lg:p-8">
 	<div class="max-w-screen-2xl mx-auto">
+		<!-- Feedback Message -->
+		{#if showFeedback}
+		<div class="mb-4 p-4 rounded-lg flex items-center gap-3 {feedbackType === 'success' ? 'bg-green-900/50 border border-green-500' : feedbackType === 'error' ? 'bg-red-900/50 border border-red-500' : 'bg-blue-900/50 border border-blue-500'}">
+			{#if feedbackType === 'success'}
+				<CheckCircle class="w-5 h-5 text-green-400" />
+			{:else if feedbackType === 'error'}
+				<AlertCircle class="w-5 h-5 text-red-400" />
+			{:else}
+				<AlertCircle class="w-5 h-5 text-blue-400" />
+			{/if}
+			<p class="text-white">{feedbackMessage}</p>
+			<button on:click={() => showFeedback = false} class="ml-auto text-slate-400 hover:text-white">✕</button>
+		</div>
+		{/if}
+		
 		<!-- Header -->
 		<header class="flex justify-between items-center mb-6">
 			<div>
 				<h1 class="text-2xl font-bold text-white">Anveshak Rover Command Center</h1>
 				<p class="text-sm text-slate-400">
 					STATUS: <span class="text-green-400 font-semibold">NOMINAL</span> | 
-					LINK: <span class="{$connectionStatus === 'connected' ? 'text-green-400' : 'text-red-400'} font-semibold">
-						{$connectionStatus === 'connected' ? 'CONNECTED' : 'OFFLINE'}
+					LINK: <span class="{$apiStatus === 'connected' ? 'text-green-400' : 'text-red-400'} font-semibold">
+						{$apiStatus === 'connected' ? 'CONNECTED' : 'OFFLINE'}
 					</span> | 
-					OCT 19 2025, 12:40 IST
+					DEC 12 2025, 12:40 IST
 				</p>
 			</div>
 			<div class="flex items-center gap-4">
@@ -137,16 +281,26 @@
 					</div>
 					<div class="p-4 space-y-3 text-sm">
 						<p class="flex justify-between"><strong>GPS Coordinates:</strong> <span>16.5062° N, 80.6480° E</span></p>
-						<p class="flex justify-between"><strong>Encoder Path:</strong> <span class="text-sky-400">Displaying...</span></p>
-						<p class="flex justify-between"><strong>Distance to Target:</strong> <span class="text-amber-400">N/A</span></p>
-						<p class="flex justify-between"><strong>Obstacles Detected:</strong> <span class="text-red-400">None</span></p>
+						<p class="flex justify-between"><strong>Total Waypoints:</strong> <span class="text-sky-400">{waypoints.length}</span></p>
+						<p class="flex justify-between"><strong>Reports Generated:</strong> <span class="text-amber-400">{reports.length}</span></p>
+						<p class="flex justify-between"><strong>API Status:</strong> <span class="{$apiStatus === 'connected' ? 'text-green-400' : 'text-red-400'}">{$apiStatus.toUpperCase()}</span></p>
 					</div>
-					<div class="p-4 border-t border-slate-700">
+					<div class="p-4 border-t border-slate-700 space-y-2">
+						<!-- IMPLEMENTED: View waypoints -->
 						<button 
 							class="btn btn-secondary w-full"
-							on:click={() => dispatchCommand('SCHEDULE_JOURNEY')}
+							on:click={loadWaypoints}
+							disabled={$apiStatus !== 'connected'}
 						>
-							<Route class="w-4 h-4 mr-2" />Schedule Journey
+							<Route class="w-4 h-4 mr-2" />View Waypoints
+						</button>
+						<!-- IMPLEMENTED: View route analysis -->
+						<button 
+							class="btn btn-secondary w-full"
+							on:click={loadRouteAnalysis}
+							disabled={$apiStatus !== 'connected'}
+						>
+							<Route class="w-4 h-4 mr-2" />Route Analysis
 						</button>
 					</div>
 				</div>
@@ -156,15 +310,16 @@
 						<h2 class="font-semibold text-lg text-white">Robotic Arm</h2>
 					</div>
 					<div class="p-4 space-y-3">
+						<!-- NOT IMPLEMENTED: Backend does not handle ARM commands yet -->
 						<button 
 							class="btn btn-primary w-full"
-							on:click={() => dispatchCommand('ARM_DROP_STORAGE')}
+							on:click={() => console.log('Drop in storage (not implemented)')}
 						>
 							<Archive class="w-4 h-4 mr-2" />Drop in Storage Box
 						</button>
 						<button 
 							class="btn btn-secondary w-full"
-							on:click={() => dispatchCommand('ARM_DROP_OUTSIDE')}
+							on:click={() => console.log('Drop outside (not implemented)')}
 						>
 							<Download class="w-4 h-4 mr-2" />Drop Outside Rover
 						</button>
@@ -184,12 +339,14 @@
 							<h3 class="font-semibold text-white flex items-center gap-2">
 								<Construction class="text-sky-400" />Drill System
 							</h3>
+							<!-- NOT IMPLEMENTED: Backend does not handle DRILL_TOGGLE yet -->
 							<div class="flex justify-between items-center">
 								<span>Drill Status</span>
 								<ToggleSwitch 
-									on:change={(e) => dispatchCommand('DRILL_TOGGLE', { enabled: e.detail })}
+									on:change={(e) => console.log('Drill toggle (not implemented):', e.detail)}
 								/>
 							</div>
+							<!-- IMPLEMENTED: Backend handles DRILL_SPEED with speed data -->
 							<label class="block text-sm font-medium">
 								Drill Speed: <span>{drillSpeed}%</span>
 							</label>
@@ -207,23 +364,26 @@
 							<h3 class="font-semibold text-white flex items-center gap-2">
 								<ArrowDownUp class="text-sky-400" />Collection System
 							</h3>
+							<!-- NOT IMPLEMENTED: Backend does not handle LINEAR_ACTUATOR yet -->
 							<div class="flex justify-between items-center">
 								<span>Linear Actuator</span>
 								<ToggleSwitch 
-									on:change={(e) => dispatchCommand('LINEAR_ACTUATOR', { enabled: e.detail })}
+									on:change={(e) => console.log('Linear actuator (not implemented):', e.detail)}
 								/>
 							</div>
+							<!-- NOT IMPLEMENTED: Backend does not handle SUCTION_SYSTEM yet -->
 							<div class="flex justify-between items-center">
 								<span>Suction System</span>
 								<ToggleSwitch 
-									on:change={(e) => dispatchCommand('SUCTION_SYSTEM', { enabled: e.detail })}
+									on:change={(e) => console.log('Suction system (not implemented):', e.detail)}
 								/>
 							</div>
+							<!-- NOT IMPLEMENTED: Backend does not handle WATER_DISPENSE yet -->
 							<div class="flex justify-between items-center">
 								<span>Water Sprinkler</span>
 								<button 
 									class="btn btn-secondary text-sm"
-									on:click={() => dispatchCommand('WATER_DISPENSE')}
+									on:click={() => console.log('Water dispense (not implemented)')}
 								>
 									Dispense
 								</button>
@@ -234,6 +394,7 @@
 							<h3 class="font-semibold text-white flex items-center gap-2">
 								<TestTubes class="text-sky-400" />Sample Analysis
 							</h3>
+							<!-- NOT IMPLEMENTED: Backend does not handle TEST_TUBE_ROTATE yet -->
 							<div class="flex justify-between items-center">
 								<span>Test Tube Module</span>
 								<div class="flex gap-2">
@@ -248,6 +409,7 @@
 									</button>
 								</div>
 							</div>
+							<!-- NOT IMPLEMENTED: Backend does not handle LOG_SITE_REASON yet -->
 							<div class="flex items-end gap-2">
 								<div class="flex-grow">
 									<label class="text-xs font-medium">Reason for choosing site:</label>
@@ -260,7 +422,7 @@
 								</div>
 								<button 
 									class="btn btn-primary"
-									on:click={() => dispatchCommand('LOG_SITE_REASON', { reason: siteReason, slot: testTubeSlot })}
+									on:click={() => console.log('Log site reason (not implemented):', siteReason, testTubeSlot)}
 								>
 									Log
 								</button>
@@ -273,9 +435,10 @@
 						<h2 class="font-semibold text-lg text-white">Soil & Chemical Analysis</h2>
 					</div>
 					<div class="p-4 space-y-4">
+						<!-- NOT IMPLEMENTED: Backend does not handle PREDICT_SOIL_TYPE yet -->
 						<button 
 							class="btn btn-primary w-full mb-2"
-							on:click={() => dispatchCommand('PREDICT_SOIL_TYPE')}
+							on:click={() => console.log('Predict soil type (not implemented)')}
 						>
 							Predict Soil Type (from Microscope)
 						</button>
@@ -354,19 +517,21 @@
 							</h3>
 							<span class="text-xl font-bold text-sky-400">2 Mbps</span>
 						</div>
+						<!-- NOT IMPLEMENTED: Backend does not handle ANTENNA_AUTO yet -->
 						<div class="flex justify-between items-center">
 							<h3 class="font-semibold text-white">Antenna Alignment</h3>
 							<div class="flex items-center gap-2">
 								<label class="text-sm">Auto</label>
 								<ToggleSwitch 
 									checked={true}
-									on:change={(e) => dispatchCommand('ANTENNA_AUTO', { enabled: e.detail })}
+									on:change={(e) => console.log('Antenna auto (not implemented):', e.detail)}
 								/>
 							</div>
 						</div>
+						<!-- NOT IMPLEMENTED: Backend does not handle SCAN_FREQUENCIES yet -->
 						<button 
 							class="btn btn-secondary w-full"
-							on:click={() => dispatchCommand('SCAN_FREQUENCIES')}
+							on:click={() => console.log('Scan frequencies (not implemented)')}
 						>
 							<ScanLine class="w-4 h-4 mr-2" />Scan Frequencies
 						</button>
@@ -377,23 +542,37 @@
 						<h2 class="font-semibold text-lg text-white">Imaging & Reports</h2>
 					</div>
 					<div class="p-4 space-y-3">
+						<!-- IMPLEMENTED: Capture test image -->
 						<button 
 							class="btn btn-secondary w-full"
-							on:click={() => dispatchCommand('TAKE_SCREENSHOT')}
+							on:click={captureTestImage}
+							disabled={$apiStatus !== 'connected'}
 						>
-							<Aperture class="w-4 h-4 mr-2" />Take Screenshot
+							<Aperture class="w-4 h-4 mr-2" />Capture Test Image
 						</button>
+						<!-- IMPLEMENTED: Run diagnostics -->
 						<button 
 							class="btn btn-secondary w-full"
-							on:click={() => dispatchCommand('CAPTURE_PANORAMIC')}
+							on:click={runDiagnostics}
+							disabled={$apiStatus !== 'connected'}
 						>
-							<Maximize class="w-4 h-4 mr-2" />Capture Panoramic
+							<ScanLine class="w-4 h-4 mr-2" />Run ROS2 Diagnostics
 						</button>
+						<!-- IMPLEMENTED: Generate comprehensive report -->
 						<button 
-							class="btn btn-secondary w-full mt-4 border-t border-slate-700 pt-3"
-							on:click={() => dispatchCommand('GENERATE_REPORT')}
+							class="btn btn-primary w-full mt-4 border-t border-slate-700 pt-3"
+							on:click={generateFullReport}
+							disabled={$apiStatus !== 'connected'}
 						>
 							<FileDown class="w-4 h-4 mr-2" />Generate Full Report (PDF)
+						</button>
+						<!-- IMPLEMENTED: View reports -->
+						<button 
+							class="btn btn-secondary w-full"
+							on:click={loadReports}
+							disabled={$apiStatus !== 'connected'}
+						>
+							<FileDown class="w-4 h-4 mr-2" />View Reports
 						</button>
 					</div>
 				</div>
@@ -409,16 +588,18 @@
 						{#each cameras as camera}
 							<div class="flex items-center justify-between p-2 bg-slate-900 rounded-lg">
 								<span class="font-medium text-sm">{camera.label}</span>
+								<!-- NOT IMPLEMENTED: Backend does not handle camera feeds yet -->
 								<ToggleSwitch 
 									checked={camera.checked}
-									on:change={(e) => dispatchCommand('CAMERA_FEED', { camera: camera.id, enabled: e.detail })}
+									on:change={(e) => console.log('Camera feed (not implemented):', camera.id, e.detail)}
 								/>
 							</div>
 						{/each}
 						<div class="flex items-center justify-between p-2 bg-slate-700 rounded-lg mt-2 border-t border-slate-600 pt-3">
 							<span class="font-medium text-sm">Cost Map Feed</span>
+							<!-- NOT IMPLEMENTED: Backend does not handle COST_MAP_FEED yet -->
 							<ToggleSwitch 
-								on:change={(e) => dispatchCommand('COST_MAP_FEED', { enabled: e.detail })}
+								on:change={(e) => console.log('Cost map feed (not implemented):', e.detail)}
 							/>
 						</div>
 					</div>
@@ -430,14 +611,16 @@
 					<div class="p-4 grid grid-cols-2 gap-x-4 gap-y-6">
 						{#each wheels as wheel}
 							<div>
-								<h3 class="font-semibold text-sm text-center text-white">{wheel}</h3>
+								<h3 class="font-semibold text-sm text-center text-white capitalize">{wheel.replace('_', ' ')}</h3>
+								<!-- NOT IMPLEMENTED: Backend does not handle wheel speed yet -->
 								<label class="block text-xs">Speed: <span>{wheelSpeeds[wheel]}%</span></label>
 								<input 
 									type="range" 
 									class="w-full" 
 									bind:value={wheelSpeeds[wheel]}
-									on:input={() => dispatchCommand('WHEEL_SPEED', { wheel, speed: wheelSpeeds[wheel] })}
+									on:input={() => console.log('Wheel speed (not implemented):', wheel, wheelSpeeds[wheel])}
 								>
+								<!-- NOT IMPLEMENTED: Backend does not handle wheel direction yet -->
 								<label class="block text-xs">Direction: <span>{wheelDirections[wheel]}°</span></label>
 								<input 
 									type="range" 
@@ -445,7 +628,7 @@
 									min="-45" 
 									max="45" 
 									bind:value={wheelDirections[wheel]}
-									on:input={() => dispatchCommand('WHEEL_DIRECTION', { wheel, direction: wheelDirections[wheel] })}
+									on:input={() => console.log('Wheel direction (not implemented):', wheel, wheelDirections[wheel])}
 								>
 							</div>
 						{/each}
@@ -490,8 +673,118 @@
 				class="btn btn-primary"
 				on:click={initiateAutonomous}
 			>
-				Initiate Autonomous Mode
+				Add Waypoint & Start
 			</button>
+		</div>
+	</Modal>
+{/if}
+
+{#if showWaypointsModal}
+	<Modal bind:show={showWaypointsModal} title="Mission Waypoints">
+		{#if waypoints.length === 0}
+			<p class="text-slate-400">No waypoints found.</p>
+		{:else}
+			<div class="space-y-3 max-h-96 overflow-y-auto">
+				{#each waypoints as waypoint, index}
+					<div class="p-4 bg-slate-800 rounded-lg border border-slate-700">
+						<div class="flex justify-between items-start mb-2">
+							<h3 class="font-semibold text-white">Waypoint #{index + 1}</h3>
+							<span class="text-xs px-2 py-1 bg-sky-500/20 text-sky-400 rounded">{waypoint.waypoint_type || 'unknown'}</span>
+						</div>
+						<div class="text-sm space-y-1">
+							<p><strong>Latitude:</strong> {waypoint.latitude}°</p>
+							<p><strong>Longitude:</strong> {waypoint.longitude}°</p>
+							{#if waypoint.description}
+								<p><strong>Description:</strong> {waypoint.description}</p>
+							{/if}
+							{#if waypoint.timestamp}
+								<p class="text-slate-400"><strong>Time:</strong> {new Date(waypoint.timestamp).toLocaleString()}</p>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+		<div class="mt-6 flex justify-end">
+			<button class="btn btn-secondary" on:click={() => showWaypointsModal = false}>Close</button>
+		</div>
+	</Modal>
+{/if}
+
+{#if showReportsModal}
+	<Modal bind:show={showReportsModal} title="Generated Reports">
+		{#if reports.length === 0}
+			<p class="text-slate-400">No reports found.</p>
+		{:else}
+			<div class="space-y-3 max-h-96 overflow-y-auto">
+				{#each reports as report}
+					<div class="p-4 bg-slate-800 rounded-lg border border-slate-700">
+						<div class="flex justify-between items-start">
+							<div>
+								<h3 class="font-semibold text-white">{report.filename || 'Report'}</h3>
+								{#if report.created_at}
+									<p class="text-xs text-slate-400 mt-1">{new Date(report.created_at).toLocaleString()}</p>
+								{/if}
+							</div>
+							{#if report.path}
+								<a href={report.path} download class="btn btn-primary text-xs">
+									<Download class="w-3 h-3 mr-1" />Download
+								</a>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+		{/if}
+		<div class="mt-6 flex justify-end">
+			<button class="btn btn-secondary" on:click={() => showReportsModal = false}>Close</button>
+		</div>
+	</Modal>
+{/if}
+
+{#if showRouteAnalysisModal}
+	<Modal bind:show={showRouteAnalysisModal} title="Route Analysis">
+		{#if routeAnalysis}
+			<div class="space-y-4">
+				<div class="p-4 bg-slate-800 rounded-lg">
+					<h3 class="font-semibold text-white mb-3">Mission Statistics</h3>
+					<div class="grid grid-cols-2 gap-4 text-sm">
+						<div>
+							<p class="text-slate-400">Total Distance</p>
+							<p class="text-xl font-bold text-sky-400">{routeAnalysis.total_distance || 'N/A'} m</p>
+						</div>
+						<div>
+							<p class="text-slate-400">Waypoints</p>
+							<p class="text-xl font-bold text-sky-400">{routeAnalysis.waypoint_count || 0}</p>
+						</div>
+						<div>
+							<p class="text-slate-400">Images Captured</p>
+							<p class="text-xl font-bold text-green-400">{routeAnalysis.images_count || 0}</p>
+						</div>
+						<div>
+							<p class="text-slate-400">Mission Time</p>
+							<p class="text-xl font-bold text-amber-400">{routeAnalysis.duration || 'N/A'}</p>
+						</div>
+					</div>
+				</div>
+				{#if routeAnalysis.path_segments}
+					<div class="p-4 bg-slate-800 rounded-lg">
+						<h3 class="font-semibold text-white mb-3">Path Segments</h3>
+						<div class="space-y-2 max-h-48 overflow-y-auto">
+							{#each routeAnalysis.path_segments as segment, index}
+								<div class="text-sm p-2 bg-slate-900 rounded">
+									<p><strong>Segment {index + 1}:</strong> {segment.distance}m</p>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/if}
+			</div>
+		{:else}
+			<p class="text-slate-400">No route analysis data available.</p>
+		{/if}
+		<div class="mt-6 flex justify-end">
+			<button class="btn btn-secondary" on:click={() => showRouteAnalysisModal = false}>Close</button>
 		</div>
 	</Modal>
 {/if}

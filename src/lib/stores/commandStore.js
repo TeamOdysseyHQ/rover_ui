@@ -13,7 +13,7 @@ export function connectToRover(ip) {
 	
 	try {
 		// Connect via WebSocket to the rover
-		ws = new WebSocket(`ws://${ip}:8080`);
+		ws = new WebSocket(`ws://${ip}:6767`);
 		
 		ws.onopen = () => {
 			console.log('✅ Connected to rover at', ip);
