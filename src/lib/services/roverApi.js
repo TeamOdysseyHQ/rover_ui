@@ -232,6 +232,117 @@ export async function testApi(data = {}) {
 }
 
 // ============================================
+// CAMERA ENDPOINTS (/api/nav/cameras/)
+// ============================================
+
+/**
+ * Detect all connected cameras
+ */
+export async function detectCameras(maxCameras = 10) {
+    const params = `?max_cameras=${maxCameras}`;
+    return apiRequest(`/api/nav/cameras/detect${params}`, { method: 'GET' });
+}
+
+/**
+ * Start a specific camera
+ */
+export async function startCamera(cameraIndex, width = 1280, height = 720, fps = 30) {
+    const formData = new FormData();
+    formData.append('width', width.toString());
+    formData.append('height', height.toString());
+    formData.append('fps', fps.toString());
+    
+    const url = `${API_BASE_URL}/api/nav/cameras/${cameraIndex}/start`;
+    const response = await fetch(url, {
+        method: 'POST',
+        body: formData
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+}
+
+/**
+ * Stop a specific camera
+ */
+export async function stopCamera(cameraIndex) {
+    const url = `${API_BASE_URL}/api/nav/cameras/${cameraIndex}/stop`;
+    const response = await fetch(url, {
+        method: 'POST'
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+}
+
+/**
+ * Stop all cameras
+ */
+export async function stopAllCameras() {
+    const url = `${API_BASE_URL}/api/nav/cameras/stop_all`;
+    const response = await fetch(url, {
+        method: 'POST'
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+}
+
+/**
+ * Get all cameras status
+ */
+export async function getCamerasStatus() {
+    return apiRequest('/api/nav/cameras/status', { method: 'GET' });
+}
+
+/**
+ * Get specific camera status
+ */
+export async function getCameraStatus(cameraIndex) {
+    return apiRequest(`/api/nav/cameras/${cameraIndex}/status`, { method: 'GET' });
+}
+
+/**
+ * Capture image from a specific camera
+ */
+export async function captureCameraImage(cameraIndex, telemetry = {}) {
+    const formData = new FormData();
+    
+    // Add telemetry data
+    Object.entries(telemetry).forEach(([key, value]) => {
+        formData.append(key, value.toString());
+    });
+    
+    const url = `${API_BASE_URL}/api/nav/cameras/${cameraIndex}/capture`;
+    const response = await fetch(url, {
+        method: 'POST',
+        body: formData
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+}
+
+/**
+ * Get camera stream URL
+ */
+export function getCameraStreamUrl(cameraIndex) {
+    return `${API_BASE_URL}/api/nav/cameras/${cameraIndex}/stream`;
+}
+
+// ============================================
 // CONVENIENCE FUNCTIONS
 // ============================================
 

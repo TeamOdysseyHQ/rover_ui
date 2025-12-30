@@ -11,6 +11,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import ConnectionPanel from '$lib/components/ConnectionPanel.svelte';
 	import CommandLog from '$lib/components/CommandLog.svelte';
+	import CameraPanel from '$lib/components/CameraPanel.svelte';
 	
 	let showAutoModal = false;
 	let showReportsModal = false;
@@ -232,6 +233,11 @@
 			</div>
 		</header>
 
+		<!-- Camera Section (Full Width) -->
+		<section class="mb-6">
+			<CameraPanel />
+		</section>
+		
 		<!-- Main Content Grid -->
 		<main class="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6">
 			
