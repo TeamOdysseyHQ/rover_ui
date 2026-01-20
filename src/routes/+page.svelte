@@ -2,9 +2,10 @@
 	import { 
 		Bot, Route, Archive, Download, Construction, ArrowDownUp, TestTubes, 
 		RotateCcw, RotateCw, BatteryCharging, Zap, Thermometer, Antenna,
-		ScanLine, Aperture, Maximize, FileDown, AlertCircle, CheckCircle
+		ScanLine, Aperture, Maximize, FileDown, AlertCircle, CheckCircle, XOctagon
 	} from 'lucide-svelte';
 	import { apiStatus, commandHistory, logCommand } from '$lib/stores/apiStore';
+	import { isRosConnected, stopRover } from '$lib/stores/rosStore';
 	import * as roverApi from '$lib/services/roverApi';
 	import Joystick from '$lib/components/Joystick.svelte';
 	import ToggleSwitch from '$lib/components/ToggleSwitch.svelte';
@@ -12,6 +13,9 @@
 	import ConnectionPanel from '$lib/components/ConnectionPanel.svelte';
 	import CommandLog from '$lib/components/CommandLog.svelte';
 	import CameraPanel from '$lib/components/CameraPanel.svelte';
+	import RosStatusPanel from '$lib/components/RosStatusPanel.svelte';
+	import OdometryPanel from '$lib/components/OdometryPanel.svelte';
+	import TeensyTopicPanel from '$lib/components/TeensyTopicPanel.svelte';
 	
 	let showAutoModal = false;
 	let showReportsModal = false;
@@ -44,10 +48,28 @@
 		}, 5000);
 	}
 	
-	// NOT IMPLEMENTED: Joystick control (no backend endpoint)
+	// IMPLEMENTED: Joystick control via ROS
 	function handleJoystickMove(event) {
-		console.log('Joystick move (not implemented in backend):', event.detail.x, event.detail.y);
+		// Joystick now publishes directly to ROS /cmd_vel
+		// This handler can be used for additional UI feedback if needed
 		logCommand({ type: 'JOYSTICK_MOVE', data: { x: event.detail.x, y: event.detail.y } }, 'sent');
+	}
+	
+	// IMPLEMENTED: Emergency stop via ROS
+	async function handleEmergencyStop() {
+		try {
+			logCommand({ type: 'EMERGENCY_STOP' }, 'sent');
+			const success = await stopRover();
+			if (success) {
+				logCommand({ type: 'EMERGENCY_STOP' }, 'success');
+				showFeedbackMessage('Emergency stop activated!', 'success');
+			} else {
+				throw new Error('Failed to stop rover');
+			}
+		} catch (error) {
+			logCommand({ type: 'EMERGENCY_STOP' }, 'error', error.message);
+			showFeedbackMessage(`Emergency stop failed: ${error.message}`, 'error');
+		}
 	}
 	
 	// NOT IMPLEMENTED: Steering mode toggle (no backend endpoint)
@@ -244,6 +266,7 @@
 			<!-- Column 1: Primary Driving & Navigation -->
 			<div class="space-y-6 xl:col-span-1">
 				<ConnectionPanel />
+				<RosStatusPanel />
 				<CommandLog />
 				
 				<div class="card">
@@ -253,30 +276,52 @@
 					<div class="p-4 flex justify-between items-center">
 						<div>
 							<h3 class="font-semibold text-white">Mode: Manual</h3>
-							<p class="text-sm text-slate-400">Ready for input</p>
+							<p class="text-sm text-slate-400">
+								{#if $isRosConnected}
+									<span class="text-green-400">ROS Connected - Ready</span>
+								{:else}
+									<span class="text-amber-400">Connect to ROS first</span>
+								{/if}
+							</p>
 						</div>
 						<button class="btn btn-primary" on:click={() => showAutoModal = true}>
 							<Bot class="w-4 h-4 mr-2" />Go Autonomous
 						</button>
 					</div>
 					<div class="p-4 flex justify-around items-center">
-						<Joystick on:move={handleJoystickMove} />
-						<div>
-							<h3 class="font-semibold mb-2 text-center text-white">Steering</h3>
-							<div class="flex items-center gap-2 mb-2">
-								<label class="text-sm">Ackerman</label>
-								<ToggleSwitch 
-									checked={ackermanMode}
-									on:change={() => toggleSteeringMode('ackerman')}
-								/>
+						<Joystick 
+							on:move={handleJoystickMove} 
+							maxLinearSpeed={1.0}
+							maxAngularSpeed={1.0}
+							enableRos={true}
+						/>
+						<div class="space-y-4">
+							<div>
+								<h3 class="font-semibold mb-2 text-center text-white">Steering</h3>
+								<div class="flex items-center gap-2 mb-2">
+									<label class="text-sm">Ackerman</label>
+									<ToggleSwitch 
+										checked={ackermanMode}
+										on:change={() => toggleSteeringMode('ackerman')}
+									/>
+								</div>
+								<div class="flex items-center gap-2">
+									<label class="text-sm">Independent</label>
+									<ToggleSwitch 
+										checked={independentMode}
+										on:change={() => toggleSteeringMode('independent')}
+									/>
+								</div>
 							</div>
-							<div class="flex items-center gap-2">
-								<label class="text-sm">Independent</label>
-								<ToggleSwitch 
-									checked={independentMode}
-									on:change={() => toggleSteeringMode('independent')}
-								/>
-							</div>
+							<button 
+								class="btn w-full bg-red-600 hover:bg-red-700 border-red-600 text-white font-bold"
+								on:click={handleEmergencyStop}
+								disabled={!$isRosConnected}
+								title="Emergency Stop"
+							>
+								<XOctagon class="w-5 h-5 mr-2" />
+								E-STOP
+							</button>
 						</div>
 					</div>
 				</div>
@@ -290,6 +335,7 @@
 						<p class="flex justify-between"><strong>Total Waypoints:</strong> <span class="text-sky-400">{waypoints.length}</span></p>
 						<p class="flex justify-between"><strong>Reports Generated:</strong> <span class="text-amber-400">{reports.length}</span></p>
 						<p class="flex justify-between"><strong>API Status:</strong> <span class="{$apiStatus === 'connected' ? 'text-green-400' : 'text-red-400'}">{$apiStatus.toUpperCase()}</span></p>
+						<p class="flex justify-between"><strong>ROS Status:</strong> <span class="{$isRosConnected ? 'text-green-400' : 'text-red-400'}">{$isRosConnected ? 'CONNECTED' : 'OFFLINE'}</span></p>
 					</div>
 					<div class="p-4 border-t border-slate-700 space-y-2">
 						<!-- IMPLEMENTED: View waypoints -->
@@ -310,6 +356,10 @@
 						</button>
 					</div>
 				</div>
+				
+				<OdometryPanel />
+				
+				<TeensyTopicPanel />
 				
 				<div class="card">
 					<div class="p-4 border-b border-slate-700">

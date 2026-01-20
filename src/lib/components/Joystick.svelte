@@ -1,11 +1,20 @@
 <script>
 	import { createEventDispatcher } from 'svelte';
+	import { publishCmdVel } from '$lib/stores/rosStore';
+	import { isRosConnected } from '$lib/stores/rosStore';
 	
 	const dispatch = createEventDispatcher();
+	
+	// Props
+	export let maxLinearSpeed = 1.0; // m/s
+	export let maxAngularSpeed = 1.0; // rad/s
+	export let enableRos = true; // Enable/disable ROS publishing
 	
 	let isDragging = false;
 	let stick;
 	let base;
+	let lastPublishTime = 0;
+	const publishInterval = 100; // ms - throttle ROS publishing
 	
 	function handleMouseDown() {
 		isDragging = true;
@@ -20,7 +29,12 @@
 			stick.style.top = '50%';
 			stick.style.transform = 'translate(-50%, -50%)';
 			setTimeout(() => stick.style.transition = '', 200);
+			
+			// Send stop command
 			dispatch('move', { x: 0, y: 0 });
+			if (enableRos && $isRosConnected) {
+				publishCmdVel(0, 0);
+			}
 		}
 	}
 	
@@ -48,9 +62,24 @@
 		
 		// Normalize values to -1 to 1
 		const normalizedX = deltaX / maxDistance;
-		const normalizedY = deltaY / maxDistance;
+		const normalizedY = -deltaY / maxDistance; // Invert Y (up is positive)
 		
 		dispatch('move', { x: normalizedX, y: normalizedY });
+		
+		// Publish to ROS (throttled)
+		if (enableRos && $isRosConnected) {
+			const now = Date.now();
+			if (now - lastPublishTime >= publishInterval) {
+				// Convert joystick to cmd_vel
+				// Y axis controls linear velocity (forward/backward)
+				// X axis controls angular velocity (left/right rotation)
+				const linear_x = normalizedY * maxLinearSpeed;
+				const angular_z = -normalizedX * maxAngularSpeed;
+				
+				publishCmdVel(linear_x, angular_z);
+				lastPublishTime = now;
+			}
+		}
 	}
 </script>
 

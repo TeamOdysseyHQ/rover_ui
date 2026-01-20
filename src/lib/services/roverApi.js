@@ -343,6 +343,93 @@ export function getCameraStreamUrl(cameraIndex) {
 }
 
 // ============================================
+// ROS BRIDGE ENDPOINTS (/api/ros/ and /api/nav/ros/)
+// ============================================
+
+/**
+ * Get ROS connection status
+ */
+export async function getRosStatus() {
+    return apiRequest('/api/ros/status', { method: 'GET' });
+}
+
+/**
+ * Connect to ROS manually
+ */
+export async function connectToRos() {
+    return apiRequest('/api/ros/connect', { method: 'POST' });
+}
+
+/**
+ * Disconnect from ROS
+ */
+export async function disconnectFromRos() {
+    return apiRequest('/api/ros/disconnect', { method: 'POST' });
+}
+
+/**
+ * Publish velocity command to /cmd_vel
+ */
+export async function publishCmdVel(velocityCommand) {
+    return apiRequest('/api/nav/ros/cmd_vel', {
+        method: 'POST',
+        body: JSON.stringify(velocityCommand)
+    });
+}
+
+/**
+ * Send stop command to rover
+ */
+export async function stopRover() {
+    return apiRequest('/api/nav/ros/cmd_vel/stop', { method: 'POST' });
+}
+
+/**
+ * Subscribe to odometry data
+ */
+export async function subscribeToOdometry() {
+    return apiRequest('/api/nav/ros/odom/subscribe', { method: 'POST' });
+}
+
+/**
+ * Get latest odometry data
+ */
+export async function getOdometry() {
+    return apiRequest('/api/nav/ros/odom', { method: 'GET' });
+}
+
+/**
+ * Get latest teensy topic data
+ */
+export async function getTeensyTopic() {
+    return apiRequest('/api/o/teensy_topic', { method: 'GET' });
+}
+
+/**
+ * Unsubscribe from teensy topic
+ */
+export async function unsubscribeTeensyTopic() {
+    return apiRequest('/api/o/teensy_topic/unsubscribe', { method: 'POST' });
+}
+
+/**
+ * Debug teensy topic state
+ */
+export async function debugTeensyTopic() {
+    return apiRequest('/api/o/teensy_topic/debug', { method: 'GET' });
+}
+
+/**
+ * Publish custom ROS message
+ */
+export async function publishRosMessage(topic, messageType, message) {
+    return apiRequest('/api/nav/ros/publish', {
+        method: 'POST',
+        body: JSON.stringify({ topic, message_type: messageType, message })
+    });
+}
+
+// ============================================
 // CONVENIENCE FUNCTIONS
 // ============================================
 
