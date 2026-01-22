@@ -1,20 +1,126 @@
-<script>
-	import { createEventDispatcher } from 'svelte';
+<script lang="ts">
 	import { publishCmdVel } from '$lib/stores/rosStore';
 	import { isRosConnected } from '$lib/stores/rosStore';
 	
-	const dispatch = createEventDispatcher();
+	// Props using $props rune
+	let { maxLinearSpeed = 1.0, maxAngularSpeed = 1.0, enableRos = true } = $props();
 	
-	// Props
-	export let maxLinearSpeed = 1.0; // m/s
-	export let maxAngularSpeed = 1.0; // rad/s
-	export let enableRos = true; // Enable/disable ROS publishing
-	
-	let isDragging = false;
-	let stick;
-	let base;
-	let lastPublishTime = 0;
+	// State using $state rune
+	let isDragging = $state(false);
+	let stick: HTMLDivElement | undefined = $state();
+	let base: HTMLDivElement | undefined = $state();
+	let lastPublishTime = $state(0);
 	const publishInterval = 100; // ms - throttle ROS publishing
+	
+	// Keyboard state
+	let keysPressed = $state({
+		w: false,
+		a: false,
+		s: false,
+		d: false
+	});
+	let keyboardActive = $state(false);
+	
+	// Custom event dispatch for Svelte 5
+	function dispatchMove(x: number, y: number) {
+		// Dispatch custom event for parent components
+		const event = new CustomEvent('move', { detail: { x, y } });
+		if (base) {
+			base.dispatchEvent(event);
+		}
+	}
+	
+	function handleKeyDown(e: KeyboardEvent) {
+		const key = e.key.toLowerCase();
+		if (['w', 'a', 's', 'd'].includes(key)) {
+			e.preventDefault();
+			if (!keysPressed[key as keyof typeof keysPressed]) {
+				keysPressed[key as keyof typeof keysPressed] = true;
+				keyboardActive = true;
+				updateFromKeyboard();
+			}
+		}
+	}
+	
+	function handleKeyUp(e: KeyboardEvent) {
+		const key = e.key.toLowerCase();
+		if (['w', 'a', 's', 'd'].includes(key)) {
+			e.preventDefault();
+			keysPressed[key as keyof typeof keysPressed] = false;
+			
+			// Check if any keys are still pressed
+			const anyKeyPressed = Object.values(keysPressed).some(pressed => pressed);
+			if (!anyKeyPressed) {
+				keyboardActive = false;
+				resetToCenter();
+			} else {
+				updateFromKeyboard();
+			}
+		}
+	}
+	
+	function resetToCenter() {
+		if (stick) {
+			stick.style.transition = 'all 0.2s ease';
+			stick.style.left = '50%';
+			stick.style.top = '50%';
+			stick.style.transform = 'translate(-50%, -50%)';
+			setTimeout(() => {
+				if (stick) stick.style.transition = '';
+			}, 200);
+		}
+		
+		// Send stop command
+		dispatchMove(0, 0);
+		if (enableRos && $isRosConnected) {
+			publishCmdVel(0, 0);
+		}
+	}
+	
+	function updateFromKeyboard() {
+		if (!stick || !base) return;
+		
+		// Calculate normalized values from keyboard state
+		let normalizedX = 0;
+		let normalizedY = 0;
+		
+		if (keysPressed.w) normalizedY += 1;
+		if (keysPressed.s) normalizedY -= 1;
+		if (keysPressed.d) normalizedX += 1;
+		if (keysPressed.a) normalizedX -= 1;
+		
+		// Normalize diagonal movement
+		const magnitude = Math.sqrt(normalizedX * normalizedX + normalizedY * normalizedY);
+		if (magnitude > 1) {
+			normalizedX /= magnitude;
+			normalizedY /= magnitude;
+		}
+		
+		// Update stick visual position
+		const baseRect = base.getBoundingClientRect();
+		const maxDistance = baseRect.width / 2 - (stick.offsetWidth / 2);
+		const deltaX = normalizedX * maxDistance;
+		const deltaY = -normalizedY * maxDistance; // Invert Y for visual
+		
+		stick.style.transition = '';
+		stick.style.left = `calc(50% + ${deltaX}px)`;
+		stick.style.top = `calc(50% + ${deltaY}px)`;
+		stick.style.transform = 'translate(-50%, -50%)';
+		
+		dispatchMove(normalizedX, normalizedY);
+		
+		// Publish to ROS (throttled)
+		if (enableRos && $isRosConnected) {
+			const now = Date.now();
+			if (now - lastPublishTime >= publishInterval) {
+				const linear_x = normalizedY * maxLinearSpeed;
+				const angular_z = -normalizedX * maxAngularSpeed;
+				
+				publishCmdVel(linear_x, angular_z);
+				lastPublishTime = now;
+			}
+		}
+	}
 	
 	function handleMouseDown() {
 		isDragging = true;
@@ -24,21 +130,25 @@
 		if (isDragging) {
 			isDragging = false;
 			// Reset to center
-			stick.style.transition = 'all 0.2s ease';
-			stick.style.left = '50%';
-			stick.style.top = '50%';
-			stick.style.transform = 'translate(-50%, -50%)';
-			setTimeout(() => stick.style.transition = '', 200);
+			if (stick) {
+				stick.style.transition = 'all 0.2s ease';
+				stick.style.left = '50%';
+				stick.style.top = '50%';
+				stick.style.transform = 'translate(-50%, -50%)';
+				setTimeout(() => {
+					if (stick) stick.style.transition = '';
+				}, 200);
+			}
 			
 			// Send stop command
-			dispatch('move', { x: 0, y: 0 });
+			dispatchMove(0, 0);
 			if (enableRos && $isRosConnected) {
 				publishCmdVel(0, 0);
 			}
 		}
 	}
 	
-	function handleMouseMove(e) {
+	function handleMouseMove(e: MouseEvent) {
 		if (!isDragging || !base || !stick) return;
 		
 		const baseRect = base.getBoundingClientRect();
@@ -64,7 +174,7 @@
 		const normalizedX = deltaX / maxDistance;
 		const normalizedY = -deltaY / maxDistance; // Invert Y (up is positive)
 		
-		dispatch('move', { x: normalizedX, y: normalizedY });
+		dispatchMove(normalizedX, normalizedY);
 		
 		// Publish to ROS (throttled)
 		if (enableRos && $isRosConnected) {
@@ -83,13 +193,18 @@
 	}
 </script>
 
-<svelte:window on:mouseup={handleMouseUp} on:mousemove={handleMouseMove} />
+<svelte:window 
+	onmouseup={handleMouseUp} 
+	onmousemove={handleMouseMove}
+	onkeydown={handleKeyDown}
+	onkeyup={handleKeyUp}
+/>
 
 <div class="joystick-base" bind:this={base}>
 	<div 
 		class="joystick-stick" 
 		bind:this={stick}
-		on:mousedown={handleMouseDown}
+		onmousedown={handleMouseDown}
 		role="button"
 		tabindex="0"
 	></div>
@@ -99,25 +214,23 @@
 	.joystick-base {
 		width: 150px;
 		height: 150px;
-		background-color: var(--slate-900);
+		background-color: #000000;
 		border-radius: 50%;
 		position: relative;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border: 3px solid var(--slate-700);
-		box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+		border: 2px solid var(--slate-700);
 	}
 
 	.joystick-stick {
 		width: 60px;
 		height: 60px;
-		background: radial-gradient(circle at 30% 30%, var(--sky-400), var(--sky-500));
+		background: var(--sky-blue);
 		border-radius: 50%;
 		cursor: grab;
 		position: absolute;
-		box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3), inset 0 0 5px rgba(255,255,255,0.2);
-		border: 1px solid var(--sky-400);
+		border: 1px solid var(--sky-light);
 	}
 
 	.joystick-stick:active {
