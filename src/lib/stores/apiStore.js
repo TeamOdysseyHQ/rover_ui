@@ -1,71 +1,49 @@
-import { writable } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
+import * as roverApi from '$lib/services/roverApi';
 
-// Store for rover command history (for logging purposes)
+// API connection status
+export const apiStatus = writable('disconnected'); // 'connected' | 'disconnected' | 'connecting'
+export const roverApiUrl = writable('http://localhost:5000');
+
+// Command history for logging
 export const commandHistory = writable([]);
 
-// Store for API connection status
-export const apiStatus = writable('disconnected'); // 'connected' | 'disconnected' | 'error'
-
-// Store for rover API base URL
-export const roverApiUrl = writable('http://localhost:6767');
-
-/**
- * Test connection to rover API
- */
+// Test API connection
 export async function testConnection(url) {
-    try {
-        const response = await fetch(`${url}/api/o/test`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ping: true })
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            if (data.success) {
-                apiStatus.set('connected');
-                roverApiUrl.set(url);
-                return true;
-            }
-        }
-        
-        apiStatus.set('error');
-        return false;
-    } catch (error) {
-        console.error('Connection test failed:', error);
-        apiStatus.set('error');
-        return false;
-    }
+	try {
+		apiStatus.set('connecting');
+		roverApiUrl.set(url);
+		
+		// Test the connection
+		const response = await fetch(`${url}/api/status`);
+		if (response.ok) {
+			apiStatus.set('connected');
+			return { success: true };
+		} else {
+			apiStatus.set('disconnected');
+			return { success: false, error: 'Connection failed' };
+		}
+	} catch (error) {
+		apiStatus.set('disconnected');
+		return { success: false, error: error.message };
+	}
 }
 
-/**
- * Disconnect from rover API
- */
+// Disconnect from rover
 export function disconnectFromRover() {
-    apiStatus.set('disconnected');
+	apiStatus.set('disconnected');
 }
 
-/**
- * Log a command to history
- */
-export function logCommand(command, status = 'sent', response = null) {
-    const entry = {
-        id: crypto.randomUUID(),
-        command,
-        timestamp: new Date().toISOString(),
-        status, // 'sent' | 'success' | 'error'
-        response
-    };
-    
-    commandHistory.update(history => [...history, entry]);
-    return entry;
-}
-
-/**
- * Clear command history
- */
-export function clearCommandHistory() {
-    commandHistory.set([]);
+// Log a command to history
+export function logCommand(command, status, response = null) {
+	commandHistory.update(history => {
+		const newCommand = {
+			id: crypto.randomUUID(),
+			command,
+			timestamp: Date.now(),
+			status,
+			response
+		};
+		return [...history, newCommand].slice(-50); // Keep last 50 commands
+	});
 }

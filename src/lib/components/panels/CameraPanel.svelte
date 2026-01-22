@@ -1,30 +1,32 @@
-<script>
-	import { onMount, onDestroy } from 'svelte';
+<script lang="ts">
 	import { Camera, Power, PowerOff, Image as ImageIcon, RefreshCw, AlertCircle } from 'lucide-svelte';
 	import { apiStatus } from '$lib/stores/apiStore';
 	import * as roverApi from '$lib/services/roverApi';
+	import * as Card from '$lib/components/ui/card';
+	import { Button } from '$lib/components/ui/button';
+	import { Badge } from '$lib/components/ui/badge';
 	
-	// Camera state
-	let cameras = [];
-	let activeCameras = new Set();
-	let loading = false;
-	let error = null;
-	let feedbackMessage = '';
-	let feedbackType = 'success';
-	let showFeedback = false;
+	// Camera state - Svelte 5 runes
+	let cameras = $state<any[]>([]);
+	let activeCameras = $state<Set<number>>(new Set());
+	let loading = $state(false);
+	let error = $state<string | null>(null);
+	let feedbackMessage = $state('');
+	let feedbackType = $state<'success' | 'error'>('success');
+	let showFeedback = $state(false);
 	
 	// Telemetry for captures
-	let telemetry = {
+	let telemetry = $state({
 		latitude: 16.5062,
 		longitude: 80.6480,
 		altitude: 0,
 		battery_level: 85,
 		mission_id: 'default',
 		rover_id: 'rover_001'
-	};
+	});
 	
 	// Show feedback messages
-	function showFeedbackMsg(message, type = 'success') {
+	function showFeedbackMsg(message: string, type: 'success' | 'error' = 'success') {
 		feedbackMessage = message;
 		feedbackType = type;
 		showFeedback = true;
@@ -43,7 +45,7 @@
 			const result = await roverApi.detectCameras();
 			cameras = result.cameras || [];
 			showFeedbackMsg(`Found ${cameras.length} camera(s)`, 'success');
-		} catch (err) {
+		} catch (err: any) {
 			error = err.message;
 			showFeedbackMsg(`Failed to detect cameras: ${err.message}`, 'error');
 			cameras = [];
@@ -53,35 +55,35 @@
 	}
 	
 	// Start a camera
-	async function startCamera(cameraIndex) {
+	async function startCamera(cameraIndex: number) {
 		try {
 			const result = await roverApi.startCamera(cameraIndex, 1280, 720, 30);
 			activeCameras.add(cameraIndex);
-			activeCameras = activeCameras; // Trigger reactivity
+			activeCameras = new Set(activeCameras); // Trigger reactivity
 			showFeedbackMsg(`Camera ${cameraIndex} started`, 'success');
-		} catch (err) {
+		} catch (err: any) {
 			showFeedbackMsg(`Failed to start camera ${cameraIndex}: ${err.message}`, 'error');
 		}
 	}
 	
 	// Stop a camera
-	async function stopCamera(cameraIndex) {
+	async function stopCamera(cameraIndex: number) {
 		try {
 			await roverApi.stopCamera(cameraIndex);
 			activeCameras.delete(cameraIndex);
-			activeCameras = activeCameras; // Trigger reactivity
+			activeCameras = new Set(activeCameras); // Trigger reactivity
 			showFeedbackMsg(`Camera ${cameraIndex} stopped`, 'success');
-		} catch (err) {
+		} catch (err: any) {
 			showFeedbackMsg(`Failed to stop camera ${cameraIndex}: ${err.message}`, 'error');
 		}
 	}
 	
 	// Capture image from camera
-	async function captureImage(cameraIndex) {
+	async function captureImage(cameraIndex: number) {
 		try {
 			const result = await roverApi.captureCameraImage(cameraIndex, telemetry);
 			showFeedbackMsg(`Image captured: ${result.saved} (${result.file_size_mb} MB)`, 'success');
-		} catch (err) {
+		} catch (err: any) {
 			showFeedbackMsg(`Failed to capture image: ${err.message}`, 'error');
 		}
 	}
@@ -91,114 +93,118 @@
 		try {
 			await roverApi.stopAllCameras();
 			activeCameras.clear();
-			activeCameras = activeCameras; // Trigger reactivity
+			activeCameras = new Set(activeCameras); // Trigger reactivity
 			showFeedbackMsg('All cameras stopped', 'success');
-		} catch (err) {
+		} catch (err: any) {
 			showFeedbackMsg(`Failed to stop cameras: ${err.message}`, 'error');
 		}
 	}
 	
 	// Get camera stream URL
-	function getStreamUrl(cameraIndex) {
+	function getStreamUrl(cameraIndex: number) {
 		return roverApi.getCameraStreamUrl(cameraIndex);
 	}
 	
-	// Lifecycle
-	onMount(() => {
+	// Lifecycle - using $effect instead of onMount/onDestroy
+	$effect(() => {
 		if ($apiStatus === 'connected') {
 			detectCameras();
 		}
-	});
-	
-	// Cleanup on destroy
-	onDestroy(() => {
-		if (activeCameras.size > 0) {
-			stopAllCameras();
-		}
+		
+		// Cleanup on destroy
+		return () => {
+			if (activeCameras.size > 0) {
+				stopAllCameras();
+			}
+		};
 	});
 </script>
 
 <div class="space-y-4">
 	<!-- Feedback Message -->
 	{#if showFeedback}
-	<div class="p-3 rounded-lg flex items-center gap-2 text-sm {feedbackType === 'success' ? 'bg-green-900/50 border border-green-500' : 'bg-red-900/50 border border-red-500'}">
+	<div class="p-3 rounded-lg flex items-center gap-2 text-sm border {feedbackType === 'success' ? 'bg-green-900/50 border-green-500' : 'bg-destructive/50 border-destructive'}">
 		<AlertCircle class="w-4 h-4" />
 		<p class="flex-grow">{feedbackMessage}</p>
-		<button on:click={() => showFeedback = false} class="text-slate-400 hover:text-white">✕</button>
+		<button onclick={() => showFeedback = false} class="text-muted-foreground hover:text-foreground">✕</button>
 	</div>
 	{/if}
 	
 	<!-- Controls -->
-	<div class="card">
-		<div class="p-4 border-b border-slate-700 flex justify-between items-center">
-			<h2 class="font-semibold text-lg text-white flex items-center gap-2">
-				<Camera class="w-5 h-5 text-sky-400" />
+	<Card.Root class="bg-card border-border">
+		<Card.Header class="border-b border-border flex-row justify-between items-center">
+			<Card.Title class="flex items-center gap-2">
+				<Camera class="w-5 h-5 text-primary" />
 				Camera Control
-			</h2>
+			</Card.Title>
 			<div class="flex gap-2">
-				<button 
-					class="btn btn-secondary text-sm"
-					on:click={detectCameras}
+				<Button 
+					variant="secondary"
+					size="sm"
+					onclick={detectCameras}
 					disabled={loading || $apiStatus !== 'connected'}
 				>
 					<RefreshCw class="w-4 h-4 mr-1" />
 					Detect
-				</button>
+				</Button>
 				{#if activeCameras.size > 0}
-				<button 
-					class="btn btn-secondary text-sm"
-					on:click={stopAllCameras}
+				<Button 
+					variant="secondary"
+					size="sm"
+					onclick={stopAllCameras}
 					disabled={$apiStatus !== 'connected'}
 				>
 					<PowerOff class="w-4 h-4 mr-1" />
 					Stop All
-				</button>
+				</Button>
 				{/if}
 			</div>
-		</div>
+		</Card.Header>
 		
-		<div class="p-4">
+		<Card.Content class="">
 			<!-- Loading State -->
 			{#if loading}
-			<div class="text-center py-8 text-slate-400">
+			<div class="text-center py-8 text-muted-foreground">
 				<RefreshCw class="w-8 h-8 mx-auto mb-2 animate-spin" />
 				<p>Detecting cameras...</p>
 			</div>
 			
 			<!-- No Cameras -->
 			{:else if cameras.length === 0}
-			<div class="text-center py-8 text-slate-400">
+			<div class="text-center py-8 text-muted-foreground">
 				<Camera class="w-8 h-8 mx-auto mb-2 opacity-50" />
 				<p>No cameras detected</p>
-				<button 
-					class="btn btn-primary text-sm mt-4"
-					on:click={detectCameras}
+				<Button 
+					variant="default"
+					size="sm"
+					class="mt-4"
+					onclick={detectCameras}
 					disabled={$apiStatus !== 'connected'}
 				>
 					Scan for Cameras
-				</button>
+				</Button>
 			</div>
 			
 			<!-- Camera Grid -->
 			{:else}
 			<div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
 				{#each cameras as camera}
-				<div class="bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
+				<div class="bg-secondary rounded-lg border border-border overflow-hidden">
 					<!-- Camera Header -->
-					<div class="p-3 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
+					<div class="p-3 bg-card border-b border-border flex justify-between items-center">
 						<div>
-							<h3 class="font-semibold text-white">Camera {camera.index}</h3>
-							<p class="text-xs text-slate-400">
+							<h3 class="font-semibold text-foreground">Camera {camera.index}</h3>
+							<p class="text-xs text-muted-foreground">
 								{camera.default_resolution} @ {camera.default_fps}fps | {camera.backend}
 							</p>
 						</div>
 						<div class="flex items-center gap-2">
 							{#if activeCameras.has(camera.index)}
 							<span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-							<span class="text-xs text-green-400">Active</span>
+							<Badge variant="success" class="text-xs">Active</Badge>
 							{:else}
-							<span class="w-2 h-2 bg-slate-600 rounded-full"></span>
-							<span class="text-xs text-slate-400">Inactive</span>
+							<span class="w-2 h-2 bg-muted rounded-full"></span>
+							<Badge variant="secondary" class="text-xs">Inactive</Badge>
 							{/if}
 						</div>
 					</div>
@@ -210,16 +216,16 @@
 							src={getStreamUrl(camera.index)}
 							alt="Camera {camera.index} Stream"
 							class="w-full h-full object-contain"
-							on:error={(e) => {
+							onerror={(e) => {
 								console.error(`Stream error for camera ${camera.index}`);
-								e.target.src = '';
+								e.currentTarget.src = '';
 							}}
 						/>
-						<div class="absolute top-2 left-2 bg-red-600 text-white text-xs px-2 py-1 rounded font-mono">
+						<div class="absolute top-2 left-2 bg-destructive text-white text-xs px-2 py-1 rounded font-mono">
 							LIVE
 						</div>
 						{:else}
-						<div class="flex items-center justify-center h-full text-slate-600">
+						<div class="flex items-center justify-center h-full text-muted">
 							<div class="text-center">
 								<Camera class="w-16 h-16 mx-auto mb-2 opacity-30" />
 								<p class="text-sm">Camera Offline</p>
@@ -229,33 +235,38 @@
 					</div>
 					
 					<!-- Camera Controls -->
-					<div class="p-3 bg-slate-800 border-t border-slate-700">
+					<div class="p-3 bg-card border-t border-border">
 						<div class="flex gap-2">
 							{#if activeCameras.has(camera.index)}
-							<button 
-								class="btn btn-secondary flex-1 text-sm"
-								on:click={() => captureImage(camera.index)}
+							<Button 
+								variant="secondary"
+								size="sm"
+								class="flex-1"
+								onclick={() => captureImage(camera.index)}
 								disabled={$apiStatus !== 'connected'}
 							>
 								<ImageIcon class="w-4 h-4 mr-1" />
 								Capture
-							</button>
-							<button 
-								class="btn btn-secondary text-sm"
-								on:click={() => stopCamera(camera.index)}
+							</Button>
+							<Button 
+								variant="secondary"
+								size="sm"
+								onclick={() => stopCamera(camera.index)}
 								disabled={$apiStatus !== 'connected'}
 							>
 								<PowerOff class="w-4 h-4" />
-							</button>
+							</Button>
 							{:else}
-							<button 
-								class="btn btn-primary flex-1 text-sm"
-								on:click={() => startCamera(camera.index)}
+							<Button 
+								variant="default"
+								size="sm"
+								class="flex-1"
+								onclick={() => startCamera(camera.index)}
 								disabled={$apiStatus !== 'connected'}
 							>
 								<Power class="w-4 h-4 mr-1" />
 								Start Camera
-							</button>
+							</Button>
 							{/if}
 						</div>
 					</div>
@@ -263,90 +274,78 @@
 				{/each}
 			</div>
 			{/if}
-		</div>
-	</div>
+		</Card.Content>
+	</Card.Root>
 	
 	<!-- Telemetry Settings -->
 	{#if cameras.length > 0}
-	<div class="card">
-		<div class="p-4 border-b border-slate-700">
-			<h3 class="font-semibold text-white">Capture Telemetry</h3>
-			<p class="text-xs text-slate-400 mt-1">Metadata attached to captured images</p>
-		</div>
-		<div class="p-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
-			<div>
-				<label class="text-xs text-slate-400 block mb-1">Latitude</label>
-				<input 
-					type="number" 
-					bind:value={telemetry.latitude}
-					class="w-full bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-sm text-white"
-					step="0.0001"
-				/>
+	<Card.Root class="bg-card border-border">
+		<Card.Header class="border-b border-border">
+			<Card.Title>Capture Telemetry</Card.Title>
+			<p class="text-xs text-muted-foreground mt-1">Metadata attached to captured images</p>
+		</Card.Header>
+		<Card.Content class="">
+			<div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+				<div>
+					<label for="latitude" class="text-xs text-muted-foreground block mb-1">Latitude</label>
+					<input 
+						id="latitude"
+						type="number" 
+						bind:value={telemetry.latitude}
+						class="w-full bg-secondary border border-border rounded-md px-2 py-1 text-sm text-foreground"
+						step="0.0001"
+					/>
+				</div>
+				<div>
+					<label for="longitude" class="text-xs text-muted-foreground block mb-1">Longitude</label>
+					<input 
+						id="longitude"
+						type="number" 
+						bind:value={telemetry.longitude}
+						class="w-full bg-secondary border border-border rounded-md px-2 py-1 text-sm text-foreground"
+						step="0.0001"
+					/>
+				</div>
+				<div>
+					<label for="altitude" class="text-xs text-muted-foreground block mb-1">Altitude (m)</label>
+					<input 
+						id="altitude"
+						type="number" 
+						bind:value={telemetry.altitude}
+						class="w-full bg-secondary border border-border rounded-md px-2 py-1 text-sm text-foreground"
+					/>
+				</div>
+				<div>
+					<label for="battery" class="text-xs text-muted-foreground block mb-1">Battery (%)</label>
+					<input 
+						id="battery"
+						type="number" 
+						bind:value={telemetry.battery_level}
+						class="w-full bg-secondary border border-border rounded-md px-2 py-1 text-sm text-foreground"
+						min="0"
+						max="100"
+					/>
+				</div>
+				<div>
+					<label for="mission" class="text-xs text-muted-foreground block mb-1">Mission ID</label>
+					<input 
+						id="mission"
+						type="text" 
+						bind:value={telemetry.mission_id}
+						class="w-full bg-secondary border border-border rounded-md px-2 py-1 text-sm text-foreground"
+					/>
+				</div>
+				<div>
+					<label for="rover" class="text-xs text-muted-foreground block mb-1">Rover ID</label>
+					<input 
+						id="rover"
+						type="text" 
+						bind:value={telemetry.rover_id}
+						class="w-full bg-secondary border border-border rounded-md px-2 py-1 text-sm text-foreground"
+					/>
+				</div>
 			</div>
-			<div>
-				<label class="text-xs text-slate-400 block mb-1">Longitude</label>
-				<input 
-					type="number" 
-					bind:value={telemetry.longitude}
-					class="w-full bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-sm text-white"
-					step="0.0001"
-				/>
-			</div>
-			<div>
-				<label class="text-xs text-slate-400 block mb-1">Altitude (m)</label>
-				<input 
-					type="number" 
-					bind:value={telemetry.altitude}
-					class="w-full bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-sm text-white"
-				/>
-			</div>
-			<div>
-				<label class="text-xs text-slate-400 block mb-1">Battery (%)</label>
-				<input 
-					type="number" 
-					bind:value={telemetry.battery_level}
-					class="w-full bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-sm text-white"
-					min="0"
-					max="100"
-				/>
-			</div>
-			<div>
-				<label class="text-xs text-slate-400 block mb-1">Mission ID</label>
-				<input 
-					type="text" 
-					bind:value={telemetry.mission_id}
-					class="w-full bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-sm text-white"
-				/>
-			</div>
-			<div>
-				<label class="text-xs text-slate-400 block mb-1">Rover ID</label>
-				<input 
-					type="text" 
-					bind:value={telemetry.rover_id}
-					class="w-full bg-slate-700 border border-slate-600 rounded-md px-2 py-1 text-sm text-white"
-				/>
-			</div>
-		</div>
-	</div>
+		</Card.Content>
+	</Card.Root>
 	{/if}
 </div>
-
-<style>
-	@keyframes pulse {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.5; }
-	}
-	
-	.animate-pulse {
-		animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-	}
-	
-	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
-	}
-	
-	.animate-spin {
-		animation: spin 1s linear infinite;
-	}
-</style>

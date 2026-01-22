@@ -1,12 +1,15 @@
-<script>
+<script lang="ts">
 	import { Wifi, WifiOff, Power } from 'lucide-svelte';
 	import { apiStatus, roverApiUrl, testConnection, disconnectFromRover } from '$lib/stores/apiStore';
 	import { setApiBaseUrl } from '$lib/services/roverApi';
+	import * as Card from '$lib/components/ui/card';
+	import { Button } from '$lib/components/ui/button';
+	import { Badge } from '$lib/components/ui/badge';
 	
-	let apiUrl = 'http://localhost:6767'; // Default API URL
+	let apiUrl = $state('http://localhost:6767'); // Default API URL
 	
-	$: isConnected = $apiStatus === 'connected';
-	$: hasError = $apiStatus === 'error';
+	let isConnected = $derived($apiStatus === 'connected');
+	let hasError = $derived($apiStatus === 'error');
 	
 	async function handleConnect() {
 		if (isConnected) {
@@ -20,18 +23,18 @@
 	}
 </script>
 
-<div class="card">
-	<div class="p-4 border-b border-slate-700">
-		<h2 class="font-semibold text-lg text-white flex items-center gap-2">
+<Card.Root class="bg-card border-border">
+	<Card.Header class="border-b border-border">
+		<Card.Title class="flex items-center gap-2">
 			{#if isConnected}
-				<Wifi class="text-green-400" />
+				<Wifi class="text-green-500" />
 			{:else}
-				<WifiOff class="text-slate-400" />
+				<WifiOff class="text-muted-foreground" />
 			{/if}
 			Rover API Connection
-		</h2>
-	</div>
-	<div class="p-4 space-y-4">
+		</Card.Title>
+	</Card.Header>
+	<Card.Content class="space-y-4">
 		<div>
 			<label for="api-url" class="block text-sm font-medium mb-2">Rover API URL</label>
 			<input 
@@ -39,35 +42,33 @@
 				type="text"
 				bind:value={apiUrl}
 				disabled={isConnected}
-				class="w-full bg-slate-700 border border-slate-600 rounded-md p-2 text-white disabled:opacity-50"
+				class="w-full bg-secondary border border-input rounded-md p-2 text-foreground disabled:opacity-50 focus:outline-hidden focus:ring-2 focus:ring-ring"
 				placeholder="http://localhost:6767"
-			>
+			/>
 		</div>
 		
 		<div class="flex items-center justify-between">
 			<div>
-				<p class="text-sm font-medium">Status:</p>
-				<p class="text-xs {isConnected ? 'text-green-400' : hasError ? 'text-red-400' : 'text-slate-400'}">
-					{#if isConnected}
-						Connected to {$roverApiUrl}
-					{:else if hasError}
-						Connection Failed
-					{:else}
-						Disconnected
-					{/if}
-				</p>
+				<p class="text-sm font-medium mb-1">Status:</p>
+				{#if isConnected}
+					<Badge variant="success">Connected to {$roverApiUrl}</Badge>
+				{:else if hasError}
+					<Badge variant="destructive">Connection Failed</Badge>
+				{:else}
+					<Badge variant="secondary">Disconnected</Badge>
+				{/if}
 			</div>
-			<button 
-				class="btn {isConnected ? 'btn-secondary' : 'btn-primary'}"
-				on:click={handleConnect}
+			<Button 
+				variant={isConnected ? 'secondary' : 'default'}
+				onclick={handleConnect}
 			>
 				<Power class="w-4 h-4 mr-2" />
 				{isConnected ? 'Disconnect' : 'Connect'}
-			</button>
+			</Button>
 		</div>
 		
 		{#if !isConnected}
-			<div class="text-xs text-slate-400 bg-slate-800 p-3 rounded">
+			<div class="text-xs text-muted-foreground bg-secondary p-3 rounded border border-border">
 				<p class="font-semibold mb-1">Setup Instructions:</p>
 				<ol class="list-decimal list-inside space-y-1">
 					<li>Start the FastAPI backend server</li>
@@ -76,9 +77,5 @@
 				</ol>
 			</div>
 		{/if}
-	</div>
-</div>
-
-<style>
-	/* Styles inherited from parent */
-</style>
+	</Card.Content>
+</Card.Root>

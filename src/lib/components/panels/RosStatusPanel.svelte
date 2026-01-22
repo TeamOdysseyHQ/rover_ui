@@ -1,25 +1,23 @@
-<script>
-	import { onMount, onDestroy } from 'svelte';
+<script lang="ts">
 	import { Wifi, WifiOff, RefreshCw, Activity } from 'lucide-svelte';
 	import { rosStatus, isRosConnected, checkRosStatus, connectToRos, disconnectFromRos } from '$lib/stores/rosStore';
+	import * as Card from '$lib/components/ui/card';
+	import { Button } from '$lib/components/ui/button';
+	import { Badge } from '$lib/components/ui/badge';
 	
-	let checking = false;
-	let statusCheckInterval;
+	let checking = $state(false);
 	
-	onMount(() => {
+	// Auto-check status with cleanup
+	$effect(() => {
 		// Initial check
 		checkRosStatus();
 		
 		// Check status every 5 seconds
-		statusCheckInterval = setInterval(() => {
+		const interval = setInterval(() => {
 			checkRosStatus();
 		}, 5000);
-	});
-	
-	onDestroy(() => {
-		if (statusCheckInterval) {
-			clearInterval(statusCheckInterval);
-		}
+		
+		return () => clearInterval(interval);
 	});
 	
 	async function handleConnect() {
@@ -41,59 +39,60 @@
 	}
 </script>
 
-<div class="card">
-	<div class="p-4 border-b border-slate-700 flex justify-between items-center">
-		<h2 class="font-semibold text-lg text-white flex items-center gap-2">
+<Card.Root class="bg-card border-border">
+	<Card.Header class="border-b border-border flex flex-row justify-between items-center py-4">
+		<Card.Title class="flex items-center gap-2">
 			{#if $isRosConnected}
-				<Activity class="w-5 h-5 text-green-400" />
+				<Activity class="w-5 h-5 text-green-500" />
 			{:else}
-				<WifiOff class="w-5 h-5 text-red-400" />
+				<WifiOff class="w-5 h-5 text-destructive" />
 			{/if}
 			ROS Bridge
-		</h2>
-		<button 
-			class="p-2 hover:bg-slate-700 rounded transition-colors"
-			on:click={handleRefresh}
+		</Card.Title>
+		<Button
+			variant="ghost"
+			size="icon"
+			onclick={handleRefresh}
 			disabled={checking}
 			title="Refresh status"
 		>
 			<RefreshCw class="w-4 h-4 {checking ? 'animate-spin' : ''}" />
-		</button>
-	</div>
+		</Button>
+	</Card.Header>
 	
-	<div class="p-4 space-y-3">
+	<Card.Content class="space-y-3">
 		<!-- Connection Status -->
 		<div class="flex justify-between items-center">
 			<span class="text-sm">Status:</span>
-			<span class="font-semibold {$isRosConnected ? 'text-green-400' : 'text-red-400'}">
+			<Badge variant={$isRosConnected ? 'success' : 'destructive'}>
 				{$isRosConnected ? 'CONNECTED' : 'DISCONNECTED'}
-			</span>
+			</Badge>
 		</div>
 		
 		{#if $rosStatus.url}
 		<div class="flex justify-between items-center text-sm">
 			<span>URL:</span>
-			<span class="text-slate-300 font-mono text-xs">{$rosStatus.url}</span>
+			<span class="text-muted-foreground font-mono text-xs">{$rosStatus.url}</span>
 		</div>
 		{/if}
 		
 		{#if $isRosConnected}
 		<div class="flex justify-between items-center text-sm">
 			<span>Subscriptions:</span>
-			<span class="text-sky-400">{$rosStatus.subscribedTopics.length}</span>
+			<Badge variant="outline" class="text-primary">{$rosStatus.subscribedTopics.length}</Badge>
 		</div>
 		
 		<div class="flex justify-between items-center text-sm">
 			<span>Publishers:</span>
-			<span class="text-sky-400">{$rosStatus.publishedTopics.length}</span>
+			<Badge variant="outline" class="text-primary">{$rosStatus.publishedTopics.length}</Badge>
 		</div>
 		
 		{#if $rosStatus.subscribedTopics.length > 0}
 		<details class="text-xs">
-			<summary class="cursor-pointer text-slate-400 hover:text-white">Subscribed Topics</summary>
+			<summary class="cursor-pointer text-muted-foreground hover:text-foreground">Subscribed Topics</summary>
 			<ul class="mt-2 space-y-1 ml-4">
 				{#each $rosStatus.subscribedTopics as topic}
-					<li class="font-mono text-slate-300">{topic}</li>
+					<li class="font-mono text-foreground">{topic}</li>
 				{/each}
 			</ul>
 		</details>
@@ -101,32 +100,34 @@
 		{/if}
 		
 		{#if $rosStatus.lastChecked}
-		<div class="text-xs text-slate-500">
+		<div class="text-xs text-muted-foreground">
 			Last checked: {new Date($rosStatus.lastChecked).toLocaleTimeString()}
 		</div>
 		{/if}
 		
 		<!-- Control Buttons -->
-		<div class="pt-3 border-t border-slate-700">
+		<div class="pt-3 border-t border-border">
 			{#if $isRosConnected}
-				<button 
-					class="btn btn-secondary w-full"
-					on:click={handleDisconnect}
+				<Button 
+					variant="secondary"
+					class="w-full"
+					onclick={handleDisconnect}
 					disabled={checking}
 				>
 					<WifiOff class="w-4 h-4 mr-2" />
 					Disconnect
-				</button>
+				</Button>
 			{:else}
-				<button 
-					class="btn btn-primary w-full"
-					on:click={handleConnect}
+				<Button 
+					variant="default"
+					class="w-full"
+					onclick={handleConnect}
 					disabled={checking}
 				>
 					<Wifi class="w-4 h-4 mr-2" />
 					Connect to ROS
-				</button>
+				</Button>
 			{/if}
 		</div>
-	</div>
-</div>
+	</Card.Content>
+</Card.Root>

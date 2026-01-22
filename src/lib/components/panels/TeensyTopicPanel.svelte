@@ -1,57 +1,58 @@
-<script>
-	import { onMount, onDestroy } from 'svelte';
+<script lang="ts">
 	import { Activity, RefreshCw, Trash2, Power } from 'lucide-svelte';
 	import { isRosConnected, teensyTopicData, startTeensyTopicUpdates, stopTeensyTopicUpdates } from '$lib/stores/rosStore';
 	import * as roverApi from '$lib/services/roverApi';
+	import * as Card from '$lib/components/ui/card';
+	import { Button } from '$lib/components/ui/button';
+	import { Badge } from '$lib/components/ui/badge';
 	
-	let updateInterval = null;
-	let dataValue = null;
-	let dataHistory = [];
+	let updateInterval = $state<number | null>(null);
+	let dataValue = $state<number | null>(null);
+	let dataHistory = $state<number[]>([]);
 	const maxHistoryLength = 20;
-	let isSubscribed = false;
-	let updateRate = 500; // ms
-	let lastUpdateTime = null;
+	let isSubscribed = $state(false);
+	let updateRate = $state(500); // ms
+	let lastUpdateTime = $state<Date | null>(null);
 	
-	onMount(async () => {
-		if ($isRosConnected) {
-			updateInterval = await startTeensyTopicUpdates(updateRate);
-			isSubscribed = true;
-		}
-	});
+	// Computed stats
+	let min = $derived(dataHistory.length > 0 ? Math.min(...dataHistory) : 0);
+	let max = $derived(dataHistory.length > 0 ? Math.max(...dataHistory) : 0);
+	let avg = $derived(
+		dataHistory.length > 0 
+			? (dataHistory.reduce((a, b) => a + b, 0) / dataHistory.length).toFixed(2) 
+			: 0
+	);
 	
-	onDestroy(() => {
-		if (updateInterval) {
+	// Watch for ROS connection and manage subscription
+	$effect(() => {
+		if ($isRosConnected && !updateInterval) {
+			startTeensyTopicUpdates(updateRate).then(interval => {
+				updateInterval = interval;
+				isSubscribed = true;
+			});
+		} else if (!$isRosConnected && updateInterval) {
 			stopTeensyTopicUpdates(updateInterval);
+			updateInterval = null;
+			isSubscribed = false;
 		}
+		
+		return () => {
+			if (updateInterval) {
+				stopTeensyTopicUpdates(updateInterval);
+			}
+		};
 	});
-	
-	// Watch for ROS connection changes
-	$: if ($isRosConnected && !updateInterval) {
-		startTeensyTopicUpdates(updateRate).then(interval => {
-			updateInterval = interval;
-			isSubscribed = true;
-		});
-	} else if (!$isRosConnected && updateInterval) {
-		stopTeensyTopicUpdates(updateInterval);
-		updateInterval = null;
-		isSubscribed = false;
-	}
 	
 	// Update local state when teensy topic data changes
-	$: if ($teensyTopicData !== null) {
-		dataValue = $teensyTopicData.data;
-		lastUpdateTime = new Date();
-		
-		// Add to history
-		dataHistory = [...dataHistory, $teensyTopicData].slice(-maxHistoryLength);
-	}
-	
-	// Calculate stats
-	$: min = dataHistory.length > 0 ? Math.min(...dataHistory) : 0;
-	$: max = dataHistory.length > 0 ? Math.max(...dataHistory) : 0;
-	$: avg = dataHistory.length > 0 
-		? (dataHistory.reduce((a, b) => a + b, 0) / dataHistory.length).toFixed(2) 
-		: 0;
+	$effect(() => {
+		if ($teensyTopicData !== null) {
+			dataValue = $teensyTopicData.data;
+			lastUpdateTime = new Date();
+			
+			// Add to history
+			dataHistory = [...dataHistory, $teensyTopicData].slice(-maxHistoryLength);
+		}
+	});
 	
 	// Handle manual start/stop
 	async function toggleSubscription() {
@@ -83,48 +84,49 @@
 	}
 	
 	// Format timestamp
-	function formatTime(date) {
+	function formatTime(date: Date | null) {
 		if (!date) return 'N/A';
 		return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 	}
 </script>
 
-<div class="card">
-	<div class="p-4 border-b border-slate-700">
+<Card.Root class="bg-card border-border">
+	<Card.Header class="border-b border-border">
 		<div class="flex items-center justify-between">
 			<div>
-				<h2 class="font-semibold text-lg text-white flex items-center gap-2">
-					<Activity class="w-5 h-5 text-green-400" />
+				<Card.Title class="flex items-center gap-2">
+					<Activity class="w-5 h-5 text-green-500" />
 					Teensy Topic Monitor
-				</h2>
-				<p class="text-xs text-slate-400 mt-1">/teensy_topic (std_msgs/Int32)</p>
+				</Card.Title>
+				<p class="text-xs text-muted-foreground mt-1">/teensy_topic (std_msgs/Int32)</p>
 			</div>
 			<div class="flex items-center gap-2">
 				{#if $isRosConnected}
-					<button
-						on:click={toggleSubscription}
-						class="btn btn-sm {isSubscribed ? 'btn-error' : 'btn-success'}"
+					<Button
+						variant={isSubscribed ? 'destructive' : 'default'}
+						size="sm"
+						onclick={toggleSubscription}
 						title={isSubscribed ? 'Stop monitoring' : 'Start monitoring'}
 					>
 						<Power class="w-4 h-4" />
 						{isSubscribed ? 'Stop' : 'Start'}
-					</button>
+					</Button>
 				{/if}
 			</div>
 		</div>
-	</div>
+	</Card.Header>
 	
-	<div class="p-4 space-y-4">
+	<Card.Content class="space-y-4">
 		{#if !$isRosConnected}
-			<p class="text-sm text-slate-400 text-center py-4">
+			<p class="text-sm text-muted-foreground text-center py-4">
 				Connect to ROS to monitor teensy topic data
 			</p>
 		{:else if !isSubscribed}
-			<p class="text-sm text-slate-400 text-center py-4">
+			<p class="text-sm text-muted-foreground text-center py-4">
 				Click "Start" to begin monitoring /teensy_topic
 			</p>
 		{:else if dataValue === null}
-			<p class="text-sm text-slate-400 text-center py-4">
+			<p class="text-sm text-muted-foreground text-center py-4">
 				<RefreshCw class="w-5 h-5 animate-spin mx-auto mb-2" />
 				Waiting for teensy topic data...
 			</p>
@@ -132,62 +134,64 @@
 			<!-- Current Value -->
 			<div class="space-y-2">
 				<div class="flex items-center justify-between">
-					<h3 class="font-semibold text-sm text-white">Current Value</h3>
-					<div class="text-xs text-slate-400">
+					<h3 class="font-semibold text-sm">Current Value</h3>
+					<div class="text-xs text-muted-foreground">
 						Updated: {formatTime(lastUpdateTime)}
 					</div>
 				</div>
-				<div class="bg-slate-900 p-4 rounded flex items-center justify-center">
+				<div class="bg-secondary p-4 rounded flex items-center justify-center">
 					<div class="text-center">
-						<div class="text-4xl font-bold text-green-400 font-mono">{dataValue}</div>
-						<div class="text-xs text-slate-400 mt-1">data value</div>
+						<div class="text-4xl font-bold text-green-500 font-mono">{dataValue}</div>
+						<div class="text-xs text-muted-foreground mt-1">data value</div>
 					</div>
 				</div>
 			</div>
 			
 			<!-- Update Rate Control -->
 			<div class="space-y-2">
-				<h3 class="font-semibold text-sm text-white">Update Rate</h3>
+				<h3 class="font-semibold text-sm">Update Rate</h3>
 				<div class="flex items-center gap-2">
 					<input
 						type="range"
 						bind:value={updateRate}
-						on:change={changeUpdateRate}
+						onchange={changeUpdateRate}
 						min="100"
 						max="2000"
 						step="100"
-						class="flex-1 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+						class="flex-1 h-2 bg-secondary rounded-lg appearance-none cursor-pointer"
 					/>
-					<span class="text-xs text-slate-400 min-w-[60px]">{updateRate}ms</span>
+					<span class="text-xs text-muted-foreground min-w-[60px]">{updateRate}ms</span>
 				</div>
 			</div>
 			
 			<!-- Statistics -->
 			<div class="space-y-2">
 				<div class="flex items-center justify-between">
-					<h3 class="font-semibold text-sm text-white">Statistics (last {dataHistory.length})</h3>
+					<h3 class="font-semibold text-sm">Statistics (last {dataHistory.length})</h3>
 					{#if dataHistory.length > 0}
-						<button
-							on:click={clearHistory}
-							class="text-xs text-slate-400 hover:text-red-400 flex items-center gap-1"
+						<Button
+							variant="ghost"
+							size="sm"
+							onclick={clearHistory}
 							title="Clear history"
+							class="h-auto py-1"
 						>
-							<Trash2 class="w-3 h-3" />
+							<Trash2 class="w-3 h-3 mr-1" />
 							Clear
-						</button>
+						</Button>
 					{/if}
 				</div>
 				<div class="grid grid-cols-3 gap-2 text-xs">
-					<div class="bg-slate-900 p-2 rounded">
-						<div class="text-slate-400">Min</div>
+					<div class="bg-secondary p-2 rounded">
+						<div class="text-muted-foreground">Min</div>
 						<div class="font-mono text-blue-400">{min}</div>
 					</div>
-					<div class="bg-slate-900 p-2 rounded">
-						<div class="text-slate-400">Avg</div>
+					<div class="bg-secondary p-2 rounded">
+						<div class="text-muted-foreground">Avg</div>
 						<div class="font-mono text-amber-400">{avg}</div>
 					</div>
-					<div class="bg-slate-900 p-2 rounded">
-						<div class="text-slate-400">Max</div>
+					<div class="bg-secondary p-2 rounded">
+						<div class="text-muted-foreground">Max</div>
 						<div class="font-mono text-red-400">{max}</div>
 					</div>
 				</div>
@@ -195,16 +199,16 @@
 			
 			<!-- Recent Values -->
 			<div class="space-y-2">
-				<h3 class="font-semibold text-sm text-white">Recent Values</h3>
-				<div class="bg-slate-900 p-2 rounded max-h-24 overflow-y-auto">
+				<h3 class="font-semibold text-sm">Recent Values</h3>
+				<div class="bg-secondary p-2 rounded max-h-24 overflow-y-auto">
 					{#if dataHistory.length === 0}
-						<p class="text-xs text-slate-400 text-center py-2">No data yet</p>
+						<p class="text-xs text-muted-foreground text-center py-2">No data yet</p>
 					{:else}
-						<div class="text-xs font-mono text-slate-300 space-y-1">
+						<div class="text-xs font-mono space-y-1">
 							{#each dataHistory.slice().reverse() as value, i}
 								<div class="flex justify-between">
-									<span class="text-slate-500">#{dataHistory.length - i}</span>
-									<span class="text-white">{value}</span>
+									<span class="text-muted-foreground">#{dataHistory.length - i}</span>
+									<span>{value}</span>
 								</div>
 							{/each}
 						</div>
@@ -212,27 +216,5 @@
 				</div>
 			</div>
 		{/if}
-	</div>
-</div>
-
-<style>
-	.card {
-		@apply bg-slate-800 rounded-lg shadow-lg;
-	}
-	
-	.btn {
-		@apply px-3 py-1.5 rounded-md font-medium text-sm transition-colors flex items-center gap-2;
-	}
-	
-	.btn-sm {
-		@apply px-2 py-1 text-xs;
-	}
-	
-	.btn-success {
-		@apply bg-green-600 hover:bg-green-700 text-white;
-	}
-	
-	.btn-error {
-		@apply bg-red-600 hover:bg-red-700 text-white;
-	}
-</style>
+	</Card.Content>
+</Card.Root>

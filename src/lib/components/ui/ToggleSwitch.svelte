@@ -1,65 +1,13 @@
-<script>
-	import { createEventDispatcher } from 'svelte';
+<script lang="ts">
+	import { Switch } from './switch';
 	
-	export let id = '';
-	export let checked = false;
+	// Props - maintain backward compatibility
+	let { id = '', checked = $bindable(false) } = $props();
 	
-	const dispatch = createEventDispatcher();
-	
-	function handleChange(e) {
-		checked = e.target.checked;
-		dispatch('change', checked);
+	// Handle change event for backward compatibility
+	function handleChange(newChecked: boolean) {
+		checked = newChecked;
 	}
 </script>
 
-<label class="toggle-switch">
-	<input type="checkbox" {id} {checked} on:change={handleChange}>
-	<span class="slider"></span>
-</label>
-
-<style>
-	.toggle-switch {
-		position: relative;
-		display: inline-block;
-		width: 50px;
-		height: 28px;
-	}
-
-	.toggle-switch input {
-		opacity: 0;
-		width: 0;
-		height: 0;
-	}
-
-	.slider {
-		position: absolute;
-		cursor: pointer;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background-color: var(--slate-700);
-		transition: .4s;
-		border-radius: 34px;
-	}
-
-	.slider:before {
-		position: absolute;
-		content: "";
-		height: 20px;
-		width: 20px;
-		left: 4px;
-		bottom: 4px;
-		background-color: white;
-		transition: .4s;
-		border-radius: 50%;
-	}
-
-	input:checked + .slider {
-		background-color: var(--sky-500);
-	}
-
-	input:checked + .slider:before {
-		transform: translateX(22px);
-	}
-</style>
+<Switch bind:checked onCheckedChange={handleChange} {id} />

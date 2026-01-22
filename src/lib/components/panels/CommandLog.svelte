@@ -1,48 +1,51 @@
-<script>
+<script lang="ts">
 	import { commandHistory } from '$lib/stores/apiStore';
 	import { Terminal } from 'lucide-svelte';
+	import * as Card from '$lib/components/ui/card';
+	import { Badge } from '$lib/components/ui/badge';
 	
-	$: recentCommands = $commandHistory.slice(-10).reverse();
+	// Derived reactive state - Svelte 5 compatible
+	let recentCommands = $derived($commandHistory.slice(-10).reverse());
 	
-	function getStatusColor(status) {
+	function getStatusVariant(status: string): 'success' | 'destructive' | 'warning' | 'default' {
 		switch(status) {
-			case 'success': return 'text-green-400';
-			case 'error': return 'text-red-400';
-			case 'sent': return 'text-amber-400';
-			default: return 'text-slate-400';
+			case 'success': return 'success';
+			case 'error': return 'destructive';
+			case 'sent': return 'warning';
+			default: return 'default';
 		}
 	}
 	
-	function formatTime(timestamp) {
+	function formatTime(timestamp: number) {
 		return new Date(timestamp).toLocaleTimeString();
 	}
 </script>
 
-<div class="card">
-	<div class="p-4 border-b border-slate-700">
-		<h2 class="font-semibold text-lg text-white flex items-center gap-2">
-			<Terminal class="text-sky-400" />
+<Card.Root class="bg-card border-border">
+	<Card.Header class="border-b border-border">
+		<Card.Title class="flex items-center gap-2">
+			<Terminal class="w-5 h-5 text-primary" />
 			API Activity Log
-		</h2>
-	</div>
-	<div class="p-4">
+		</Card.Title>
+	</Card.Header>
+	<Card.Content class="">
 		{#if recentCommands.length === 0}
-			<p class="text-slate-400 text-sm text-center py-4">No API calls yet</p>
+			<p class="text-muted-foreground text-sm text-center py-4">No API calls yet</p>
 		{:else}
 			<div class="space-y-2 max-h-64 overflow-y-auto">
 				{#each recentCommands as cmd}
-					<div class="bg-slate-900 rounded p-2 text-xs font-mono">
-						<div class="flex justify-between items-start mb-1">
-							<span class="text-sky-400 font-semibold">{cmd.command}</span>
-							<span class="{getStatusColor(cmd.status)} text-[10px]">
+					<div class="bg-secondary rounded p-3 text-xs">
+						<div class="flex justify-between items-start mb-2">
+							<span class="text-primary font-semibold font-mono">{cmd.command}</span>
+							<Badge variant={getStatusVariant(cmd.status)} class="text-[10px] h-5">
 								{cmd.status.toUpperCase()}
-							</span>
+							</Badge>
 						</div>
-						<div class="text-slate-500 text-[10px]">
+						<div class="text-muted-foreground text-[10px]">
 							{formatTime(cmd.timestamp)}
 						</div>
 						{#if cmd.response}
-							<div class="text-slate-400 mt-1">
+							<div class="text-muted-foreground mt-2 font-mono truncate">
 								{JSON.stringify(cmd.response).substring(0, 100)}...
 							</div>
 						{/if}
@@ -50,5 +53,5 @@
 				{/each}
 			</div>
 		{/if}
-	</div>
-</div>
+	</Card.Content>
+</Card.Root>
