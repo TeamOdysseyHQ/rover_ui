@@ -336,10 +336,33 @@ export async function captureCameraImage(cameraIndex, telemetry = {}) {
 }
 
 /**
- * Get camera stream URL
+ * Get camera stream URL (MJPEG)
  */
 export function getCameraStreamUrl(cameraIndex) {
     return `${API_BASE_URL}/api/nav/cameras/${cameraIndex}/stream`;
+}
+
+/**
+ * Get camera WebSocket stream URL
+ */
+export function getCameraWebSocketUrl(cameraIndex, quality = 85, fps = 30) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = API_BASE_URL.replace(/^https?:\/\//, '');
+    return `${protocol}//${host}/api/nav/cameras/${cameraIndex}/ws?quality=${quality}&fps=${fps}`;
+}
+
+/**
+ * Get WebSocket streaming status for all cameras
+ */
+export async function getWebSocketStatus() {
+    return apiRequest('/api/nav/cameras/ws/status', { method: 'GET' });
+}
+
+/**
+ * Get WebSocket streaming status for specific camera
+ */
+export async function getCameraWebSocketStatus(cameraIndex) {
+    return apiRequest(`/api/nav/cameras/${cameraIndex}/ws/status`, { method: 'GET' });
 }
 
 // ============================================

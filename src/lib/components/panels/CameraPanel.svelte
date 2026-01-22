@@ -1,10 +1,12 @@
 <script lang="ts">
-	import { Camera, Power, PowerOff, Image as ImageIcon, RefreshCw, AlertCircle } from 'lucide-svelte';
+	import { Camera, Power, PowerOff, Image as ImageIcon, RefreshCw, AlertCircle, Wifi, WifiOff, Activity } from 'lucide-svelte';
 	import { apiStatus } from '$lib/stores/apiStore';
 	import * as roverApi from '$lib/services/roverApi';
+	import { VideoStreamClient, type StreamMetrics } from '$lib/services/videoStreamService';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
+	import { onMount } from 'svelte';
 	
 	// Camera state - Svelte 5 runes
 	let cameras = $state<any[]>([]);
@@ -14,6 +16,18 @@
 	let feedbackMessage = $state('');
 	let feedbackType = $state<'success' | 'error'>('success');
 	let showFeedback = $state(false);
+	
+	// Streaming mode per camera: 'mjpeg' or 'websocket'
+	let streamingModes = $state<Map<number, 'mjpeg' | 'websocket'>>(new Map());
+	
+	// WebSocket clients per camera
+	let wsClients = $state<Map<number, VideoStreamClient>>(new Map());
+	
+	// Stream metrics per camera
+	let streamMetrics = $state<Map<number, StreamMetrics>>(new Map());
+	
+	// Canvas refs per camera
+	let canvasRefs: Record<number, HTMLCanvasElement | undefined> = $state({});
 	
 	// Telemetry for captures
 	let telemetry = $state({
@@ -45,6 +59,14 @@
 			const result = await roverApi.detectCameras();
 			cameras = result.cameras || [];
 			showFeedbackMsg(`Found ${cameras.length} camera(s)`, 'success');
+			
+			// Initialize streaming mode for each camera (default to WebSocket)
+			cameras.forEach(cam => {
+				if (!streamingModes.has(cam.index)) {
+					streamingModes.set(cam.index, 'websocket');
+				}
+			});
+			streamingModes = new Map(streamingModes);
 		} catch (err: any) {
 			error = err.message;
 			showFeedbackMsg(`Failed to detect cameras: ${err.message}`, 'error');
@@ -59,8 +81,18 @@
 		try {
 			const result = await roverApi.startCamera(cameraIndex, 1280, 720, 30);
 			activeCameras.add(cameraIndex);
-			activeCameras = new Set(activeCameras); // Trigger reactivity
-			showFeedbackMsg(`Camera ${cameraIndex} started`, 'success');
+			activeCameras = new Set(activeCameras);
+			
+			// Start streaming based on mode
+			const mode = streamingModes.get(cameraIndex) || 'websocket';
+			if (mode === 'websocket') {
+				// Wait for canvas to be rendered before connecting WebSocket
+				setTimeout(() => {
+					startWebSocketStream(cameraIndex);
+				}, 100);
+			}
+			
+			showFeedbackMsg(`Camera ${cameraIndex} started (${mode.toUpperCase()})`, 'success');
 		} catch (err: any) {
 			showFeedbackMsg(`Failed to start camera ${cameraIndex}: ${err.message}`, 'error');
 		}
@@ -69,13 +101,97 @@
 	// Stop a camera
 	async function stopCamera(cameraIndex: number) {
 		try {
+			// Stop WebSocket if active
+			stopWebSocketStream(cameraIndex);
+			
 			await roverApi.stopCamera(cameraIndex);
 			activeCameras.delete(cameraIndex);
-			activeCameras = new Set(activeCameras); // Trigger reactivity
+			activeCameras = new Set(activeCameras);
 			showFeedbackMsg(`Camera ${cameraIndex} stopped`, 'success');
 		} catch (err: any) {
 			showFeedbackMsg(`Failed to stop camera ${cameraIndex}: ${err.message}`, 'error');
 		}
+	}
+	
+	// Start WebSocket stream
+	function startWebSocketStream(cameraIndex: number) {
+		console.log(`[CameraPanel] Starting WebSocket stream for camera ${cameraIndex}`);
+		
+		// Get or create canvas
+		const canvas = canvasRefs[cameraIndex];
+		if (!canvas) {
+			console.error(`[CameraPanel] Canvas not found for camera ${cameraIndex}`);
+			console.error(`[CameraPanel] Available canvas refs:`, Object.keys(canvasRefs));
+			showFeedbackMsg(`Failed to start WebSocket: Canvas element not ready`, 'error');
+			return;
+		}
+		
+		console.log(`[CameraPanel] Canvas found for camera ${cameraIndex}:`, canvas);
+		
+		// Create WebSocket client
+		const client = new VideoStreamClient({
+			quality: 85,
+			fps: 30,
+			autoReconnect: true
+		});
+		
+		// Setup callbacks
+		client.onMetrics((metrics) => {
+			streamMetrics.set(cameraIndex, metrics);
+			streamMetrics = new Map(streamMetrics);
+		});
+		
+		client.onStateChange((state) => {
+			console.log(`[CameraPanel] Camera ${cameraIndex} state: ${state}`);
+		});
+		
+		client.onError((error) => {
+			console.error(`[CameraPanel] Camera ${cameraIndex} error:`, error);
+			showFeedbackMsg(`Stream error: ${error.message}`, 'error');
+		});
+		
+		// Connect
+		console.log(`[CameraPanel] Connecting WebSocket for camera ${cameraIndex}...`);
+		client.connect(cameraIndex, canvas).catch((error) => {
+			console.error(`[CameraPanel] Failed to connect WebSocket:`, error);
+			showFeedbackMsg(`Failed to connect WebSocket: ${error.message}`, 'error');
+		});
+		
+		wsClients.set(cameraIndex, client);
+		wsClients = new Map(wsClients);
+		console.log(`[CameraPanel] WebSocket client created for camera ${cameraIndex}`);
+	}
+	
+	// Stop WebSocket stream
+	function stopWebSocketStream(cameraIndex: number) {
+		const client = wsClients.get(cameraIndex);
+		if (client) {
+			client.disconnect();
+			wsClients.delete(cameraIndex);
+			wsClients = new Map(wsClients);
+			streamMetrics.delete(cameraIndex);
+			streamMetrics = new Map(streamMetrics);
+		}
+	}
+	
+	// Toggle streaming mode
+	function toggleStreamingMode(cameraIndex: number) {
+		const currentMode = streamingModes.get(cameraIndex) || 'websocket';
+		const newMode = currentMode === 'mjpeg' ? 'websocket' : 'mjpeg';
+		
+		// If camera is active, restart with new mode
+		if (activeCameras.has(cameraIndex)) {
+			if (currentMode === 'websocket') {
+				stopWebSocketStream(cameraIndex);
+			}
+			if (newMode === 'websocket') {
+				startWebSocketStream(cameraIndex);
+			}
+		}
+		
+		streamingModes.set(cameraIndex, newMode);
+		streamingModes = new Map(streamingModes);
+		showFeedbackMsg(`Switched to ${newMode.toUpperCase()} mode`, 'success');
 	}
 	
 	// Capture image from camera
@@ -91,18 +207,30 @@
 	// Stop all cameras
 	async function stopAllCameras() {
 		try {
+			// Stop all WebSocket streams
+			wsClients.forEach((client, index) => {
+				client.disconnect();
+			});
+			wsClients.clear();
+			wsClients = new Map(wsClients);
+			
 			await roverApi.stopAllCameras();
 			activeCameras.clear();
-			activeCameras = new Set(activeCameras); // Trigger reactivity
+			activeCameras = new Set(activeCameras);
 			showFeedbackMsg('All cameras stopped', 'success');
 		} catch (err: any) {
 			showFeedbackMsg(`Failed to stop cameras: ${err.message}`, 'error');
 		}
 	}
 	
-	// Get camera stream URL
+	// Get camera stream URL (MJPEG)
 	function getStreamUrl(cameraIndex: number) {
 		return roverApi.getCameraStreamUrl(cameraIndex);
+	}
+	
+	// Get metrics for camera
+	function getMetrics(cameraIndex: number): StreamMetrics | null {
+		return streamMetrics.get(cameraIndex) || null;
 	}
 	
 	// Lifecycle - using $effect instead of onMount/onDestroy
@@ -189,6 +317,8 @@
 			{:else}
 			<div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
 				{#each cameras as camera}
+				{@const mode = streamingModes.get(camera.index) || 'websocket'}
+				{@const metrics = getMetrics(camera.index)}
 				<div class="bg-secondary rounded-lg border border-border overflow-hidden">
 					<!-- Camera Header -->
 					<div class="p-3 bg-card border-b border-border flex justify-between items-center">
@@ -209,21 +339,72 @@
 						</div>
 					</div>
 					
+					<!-- Stream Mode Selector -->
+					<div class="px-3 py-2 bg-card/50 border-b border-border flex items-center justify-between">
+						<div class="flex items-center gap-2 text-xs text-muted-foreground">
+							{#if mode === 'websocket'}
+							<Wifi class="w-3 h-3 text-sky-500" />
+							<span class="text-sky-500 font-medium">WebSocket</span>
+							<span class="text-muted-foreground">Low Latency</span>
+							{:else}
+							<Activity class="w-3 h-3" />
+							<span>MJPEG</span>
+							<span class="text-muted-foreground">Compatible</span>
+							{/if}
+						</div>
+						<Button 
+							variant="ghost"
+							size="sm"
+							onclick={() => toggleStreamingMode(camera.index)}
+							disabled={activeCameras.has(camera.index)}
+							class="h-6 text-xs"
+						>
+							Switch
+						</Button>
+					</div>
+					
+					<!-- Performance Metrics (WebSocket only) -->
+					{#if activeCameras.has(camera.index) && mode === 'websocket' && metrics}
+					<div class="px-3 py-1.5 bg-black/30 border-b border-border flex items-center justify-between text-xs font-mono">
+						<div class="flex items-center gap-3">
+							<span class="text-muted-foreground">FPS: <span class="text-sky-500">{metrics.fps.toFixed(1)}</span></span>
+							<span class="text-muted-foreground">Latency: <span class="text-sky-500">{metrics.avgLatencyMs.toFixed(0)}ms</span></span>
+							<span class="text-muted-foreground">Frames: <span class="text-sky-500">{metrics.framesReceived}</span></span>
+						</div>
+						{#if metrics.connected}
+						<Wifi class="w-3 h-3 text-green-500" />
+						{:else}
+						<WifiOff class="w-3 h-3 text-destructive" />
+						{/if}
+					</div>
+					{/if}
+					
 					<!-- Camera Stream or Placeholder -->
 					<div class="relative bg-black aspect-video">
 						{#if activeCameras.has(camera.index)}
-						<img 
-							src={getStreamUrl(camera.index)}
-							alt="Camera {camera.index} Stream"
-							class="w-full h-full object-contain"
-							onerror={(e) => {
-								console.error(`Stream error for camera ${camera.index}`);
-								e.currentTarget.src = '';
-							}}
-						/>
-						<div class="absolute top-2 left-2 bg-destructive text-white text-xs px-2 py-1 rounded font-mono">
-							LIVE
-						</div>
+							{#if mode === 'websocket'}
+							<!-- WebSocket Canvas -->
+							<canvas
+								bind:this={canvasRefs[camera.index]}
+								width="1280"
+								height="720"
+								class="w-full h-full object-contain"
+							></canvas>
+							<div class="absolute top-2 left-2 bg-sky-500 text-white text-xs px-2 py-1 rounded font-mono flex items-center gap-1">
+								<Wifi class="w-3 h-3" />
+								LIVE WS
+							</div>
+							{:else}
+							<!-- MJPEG Image -->
+							<img 
+								src={getStreamUrl(camera.index)}
+								alt="Camera {camera.index} Stream"
+								class="w-full h-full object-contain"
+							/>
+							<div class="absolute top-2 left-2 bg-destructive text-white text-xs px-2 py-1 rounded font-mono">
+								LIVE MJPEG
+							</div>
+							{/if}
 						{:else}
 						<div class="flex items-center justify-center h-full text-muted">
 							<div class="text-center">
