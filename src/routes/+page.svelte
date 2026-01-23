@@ -15,6 +15,7 @@
 	import DrivingControls from '$lib/components/sections/DrivingControls.svelte';
 	import NavigationSection from '$lib/components/sections/NavigationSection.svelte';
 	import RoboticArm from '$lib/components/sections/RoboticArm.svelte';
+	import ScienceReports from '$lib/components/sections/ScienceReports.svelte';
 	
 	// Mission Panels
 	import ABExPanel from '$lib/components/panels/missions/ABExPanel.svelte';
@@ -119,12 +120,13 @@
 				<RoboticArm />
             </div>
 
-            <div>
+            <div class="space-y-6">
 				<NavigationSection 
 					{waypoints}
 					onViewWaypoints={loadWaypoints}
 					onViewRouteAnalysis={loadRouteAnalysis}
 				/>
+				<ScienceReports />
             </div>
 
 

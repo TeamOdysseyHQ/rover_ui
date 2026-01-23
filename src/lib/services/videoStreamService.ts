@@ -87,6 +87,7 @@ export class VideoStreamClient {
 	private config: Required<StreamConfig>;
 	private state: ConnectionState = 'disconnected';
 	private cameraIndex: number | null = null;
+	private intentionalDisconnect: boolean = false;
 
 	// Metrics tracking
 	private metrics: StreamMetrics = {
@@ -129,6 +130,9 @@ export class VideoStreamClient {
 			return;
 		}
 
+		// Reset intentional disconnect flag
+		this.intentionalDisconnect = false;
+
 		// Store canvas reference
 		if (canvas) {
 			this.canvas = canvas;
@@ -164,6 +168,9 @@ export class VideoStreamClient {
 	 * Disconnect from WebSocket stream
 	 */
 	disconnect(): void {
+		// Mark as intentional so we don't show errors or auto-reconnect
+		this.intentionalDisconnect = true;
+
 		if (this.reconnectTimeout) {
 			clearTimeout(this.reconnectTimeout);
 			this.reconnectTimeout = null;
@@ -175,7 +182,8 @@ export class VideoStreamClient {
 		}
 
 		if (this.ws) {
-			this.ws.close();
+			// Close with normal closure code
+			this.ws.close(1000, 'User requested disconnect');
 			this.ws = null;
 		}
 
@@ -382,6 +390,12 @@ export class VideoStreamClient {
 	}
 
 	private handleError(event: Event): void {
+		// Ignore errors if we intentionally disconnected
+		if (this.intentionalDisconnect) {
+			console.log('[VideoStream] Ignoring error during intentional disconnect');
+			return;
+		}
+
 		console.error('[VideoStream] WebSocket error:', event);
 		this.setState('error');
 		this.metrics.errors++;
@@ -398,8 +412,8 @@ export class VideoStreamClient {
 			this.metricsInterval = null;
 		}
 
-		// Auto-reconnect if enabled
-		if (this.config.autoReconnect && event.code !== 1000 && this.cameraIndex !== null) {
+		// Only auto-reconnect if not intentionally disconnected
+		if (!this.intentionalDisconnect && this.config.autoReconnect && event.code !== 1000 && this.cameraIndex !== null) {
 			console.log(`[VideoStream] Reconnecting in ${this.config.reconnectDelay}ms...`);
 			this.reconnectTimeout = window.setTimeout(() => {
 				if (this.cameraIndex !== null) {
