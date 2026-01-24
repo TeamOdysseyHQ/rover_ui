@@ -2,22 +2,89 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-	--slate-900: #0f172a;
-	--slate-800: #1e293b;
-	--slate-700: #334155;
-	--slate-600: #475569;
-	--slate-400: #94a3b8;
-	--slate-300: #cbd5e1;
-	--sky-500: #0ea5e9;
-	--sky-400: #38bdf8;
-	--green-500: #22c55e;
-	--amber-500: #f59e0b;
-	--red-500: #ef4444;
+@layer base {
+    :root {
+        --pure-black: #000000;
+        --slate-900: #1e293b;
+        --slate-800: #334155;
+        --slate-700: #475569;
+        --slate-600: #64748b;
+        --slate-400: #94a3b8;
+        --slate-300: #cbd5e1;
+        --sky-blue: #0ea5e9;
+        --sky-light: #38bdf8;
+        --green: #22c55e;
+        --amber: #f59e0b;
+        --red: #ef4444;
+
+        --background: 0 0% 0%;
+        --foreground: 210 40% 98%;
+
+        --card: 215 25% 12%; /* Dark slate #1e293b */
+        --card-foreground: 210 40% 98%;
+
+        --popover: 215 25% 12%;
+        --popover-foreground: 210 40% 98%;
+
+        --primary: 199 89% 48%; /* Sky blue */
+        --primary-foreground: 210 40% 98%;
+
+        --secondary: 215 20% 20%; /* Slate */
+        --secondary-foreground: 210 40% 98%;
+
+        --muted: 215 20% 15%;
+        --muted-foreground: 215 20.2% 65.1%;
+
+        --accent: 199 89% 48%; /* Sky blue */
+        --accent-foreground: 0 0% 98%;
+
+        --destructive: 0 84% 60%; /* Red */
+        --destructive-foreground: 210 40% 98%;
+
+        --border: 215 20% 20%; /* Subtle border */
+        --input: 215 20% 20%;
+        --ring: 199 89% 48%; /* Sky blue ring */
+
+        --radius: 0.5rem;
+    }
+
+    .dark {
+        --background: 0 0% 0%;
+        --foreground: 210 40% 98%;
+
+        --card: 215 25% 12%;
+        --card-foreground: 210 40% 98%;
+
+        --popover: 215 25% 12%;
+        --popover-foreground: 210 40% 98%;
+
+        --primary: 199 89% 48%;
+        --primary-foreground: 210 40% 98%;
+
+        --secondary: 215 20% 20%;
+        --secondary-foreground: 210 40% 98%;
+
+        --muted: 215 20% 15%;
+        --muted-foreground: 215 20.2% 65.1%;
+
+        --accent: 199 89% 48%;
+        --accent-foreground: 0 0% 98%;
+
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 210 40% 98%;
+
+        --border: 215 20% 20%;
+        --input: 215 20% 20%;
+        --ring: 199 89% 48%;
+    }
 }
 
-body {
-	font-family: 'Inter', sans-serif;
-	background-color: var(--slate-900);
-	color: var(--slate-300);
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+        font-family: "Inter", sans-serif;
+    }
 }

@@ -1,198 +1,152 @@
-/**
- * ROS Bridge Store
- * Manages ROS connection state and provides reactive updates
- */
-
 import { writable, derived } from 'svelte/store';
-import * as roverApi from '$lib/services/roverApi';
+import * as api from '$lib/services/roverApi.js';
 
 // ROS connection status
 export const rosStatus = writable({
-    connected: false,
-    url: '',
-    subscribedTopics: [],
-    publishedTopics: [],
-    lastChecked: null
+	status: 'disconnected',
+	url: null,
+	subscribedTopics: [],
+	publishedTopics: [],
+	lastChecked: null
 });
-
-// Odometry data
-export const odometryData = writable(null);
+export const isRosConnected = derived(rosStatus, $status => $status.status === 'connected');
 
 // Teensy topic data
 export const teensyTopicData = writable(null);
 
-// Derived store for connection status (simple boolean)
-export const isRosConnected = derived(
-    rosStatus,
-    $rosStatus => $rosStatus.connected
-);
-
-/**
- * Check ROS connection status
- */
+// Check ROS status
 export async function checkRosStatus() {
-    try {
-        const response = await roverApi.getRosStatus();
-        if (response.success) {
-            rosStatus.update(current => ({
-                connected: response.status.connected,
-                url: response.status.url,
-                subscribedTopics: response.status.subscribed_topics || [],
-                publishedTopics: response.status.published_topics || [],
-                lastChecked: new Date()
-            }));
-            return response.status.connected;
-        }
-        return false;
-    } catch (error) {
-        console.error('Failed to check ROS status:', error);
-        rosStatus.update(current => ({
-            ...current,
-            connected: false,
-            lastChecked: new Date()
-        }));
-        return false;
-    }
+	try {
+		const response = await api.getRosStatus();
+		const statusData = response.status || {};
+		const connected = statusData.connected === true;
+		
+		rosStatus.set({
+			status: connected ? 'connected' : 'disconnected',
+			url: statusData.url || null,
+			subscribedTopics: statusData.subscribed_topics || [],
+			publishedTopics: statusData.published_topics || [],
+			lastChecked: Date.now()
+		});
+		
+		return { connected };
+	} catch (error) {
+		console.error('Error checking ROS status:', error);
+		rosStatus.set({
+			status: 'disconnected',
+			url: null,
+			subscribedTopics: [],
+			publishedTopics: [],
+			lastChecked: Date.now()
+		});
+		return { connected: false };
+	}
 }
 
-/**
- * Connect to ROS manually
- */
-export async function connectToRos() {
-    try {
-        const response = await roverApi.connectToRos();
-        if (response.success) {
-            await checkRosStatus();
-            return true;
-        }
-        return false;
-    } catch (error) {
-        console.error('Failed to connect to ROS:', error);
-        return false;
-    }
+// Connect to ROS
+export async function connectToRos(rosUrl) {
+	try {
+		rosStatus.update(s => ({ ...s, status: 'connecting' }));
+		const response = await api.connectToRos();
+		if (response.success) {
+			rosStatus.update(s => ({ ...s, status: 'connected', url: response.url }));
+			return { success: true };
+		} else {
+			rosStatus.update(s => ({ ...s, status: 'disconnected' }));
+			return { success: false, error: response.message || 'Connection failed' };
+		}
+	} catch (error) {
+		rosStatus.update(s => ({ ...s, status: 'disconnected' }));
+		return { success: false, error: error.message };
+	}
 }
 
-/**
- * Disconnect from ROS
- */
+// Disconnect from ROS
 export async function disconnectFromRos() {
-    try {
-        const response = await roverApi.disconnectFromRos();
-        if (response.success) {
-            await checkRosStatus();
-            return true;
-        }
-        return false;
-    } catch (error) {
-        console.error('Failed to disconnect from ROS:', error);
-        return false;
-    }
+	try {
+		await api.disconnectFromRos();
+		rosStatus.update(s => ({ ...s, status: 'disconnected', subscribedTopics: [], publishedTopics: [] }));
+	} catch (error) {
+		console.error('Error disconnecting from ROS:', error);
+		rosStatus.update(s => ({ ...s, status: 'disconnected' }));
+	}
 }
 
-/**
- * Publish velocity command
- */
-export async function publishCmdVel(linear_x = 0, angular_z = 0) {
-    try {
-        const response = await roverApi.publishCmdVel({
-            linear_x,
-            linear_y: 0,
-            linear_z: 0,
-            angular_x: 0,
-            angular_y: 0,
-            angular_z
-        });
-        return response.success;
-    } catch (error) {
-        console.error('Failed to publish cmd_vel:', error);
-        return false;
-    }
-}
-
-/**
- * Stop rover immediately
- */
+// Stop the rover
 export async function stopRover() {
-    try {
-        const response = await roverApi.stopRover();
-        return response.success;
-    } catch (error) {
-        console.error('Failed to stop rover:', error);
-        return false;
-    }
+	try {
+		const response = await api.stopRover();
+		return response.success === true;
+	} catch (error) {
+		console.error('Error stopping rover:', error);
+		return false;
+	}
 }
 
-/**
- * Subscribe to odometry and start polling
- */
-export async function startOdometryUpdates(intervalMs = 500) {
-    try {
-        // Subscribe first
-        await roverApi.subscribeToOdometry();
-        
-        // Poll for updates
-        const interval = setInterval(async () => {
-            try {
-                const response = await roverApi.getOdometry();
-                if (response.success && response.data) {
-                    odometryData.set(response.data);
-                }
-            } catch (error) {
-                console.error('Failed to get odometry:', error);
-            }
-        }, intervalMs);
-        
-        return interval;
-    } catch (error) {
-        console.error('Failed to start odometry updates:', error);
-        return null;
-    }
+// Publish command velocity to ROS
+export async function publishCmdVel(linearX, angularZ) {
+	try {
+		const velocityCommand = {
+			linear_x: linearX,
+			linear_y: 0.0,
+			linear_z: 0.0,
+			angular_x: 0.0,
+			angular_y: 0.0,
+			angular_z: angularZ
+		};
+		const response = await api.publishCmdVel(velocityCommand);
+		return response;
+	} catch (error) {
+		console.error('Error publishing cmd_vel:', error);
+		throw error;
+	}
 }
 
-/**
- * Stop odometry updates
- */
-export function stopOdometryUpdates(intervalId) {
-    if (intervalId) {
-        clearInterval(intervalId);
-    }
+// Start teensy topic updates
+export async function startTeensyTopicUpdates(rate) {
+	const intervalId = setInterval(async () => {
+		try {
+			const response = await api.getTeensyTopic();
+			if (response.success && response.data) {
+				teensyTopicData.set(response.data);
+			}
+		} catch (error) {
+			console.error('Error fetching teensy topic data:', error);
+		}
+	}, rate);
+	
+	return intervalId;
 }
 
-/**
- * Start polling teensy topic data
- * Note: The endpoint automatically subscribes on first call
- */
-export async function startTeensyTopicUpdates(intervalMs = 500) {
-    try {
-        // Poll for updates (endpoint handles subscription automatically)
-        const interval = setInterval(async () => {
-            try {
-                const response = await roverApi.getTeensyTopic();
-                if (response.success && response.data !== undefined) {
-                    teensyTopicData.set(response.data);
-                }
-            } catch (error) {
-                console.error('Failed to get teensy topic data:', error);
-            }
-        }, intervalMs);
-        
-        return interval;
-    } catch (error) {
-        console.error('Failed to start teensy topic updates:', error);
-        return null;
-    }
+// Stop teensy topic updates
+export async function stopTeensyTopicUpdates(intervalId) {
+	clearInterval(intervalId);
+	try {
+		await api.unsubscribeTeensyTopic();
+	} catch (error) {
+		console.error('Error unsubscribing from teensy topic:', error);
+	}
+	teensyTopicData.set(null);
 }
 
-/**
- * Stop teensy topic updates
- */
-export function stopTeensyTopicUpdates(intervalId) {
-    if (intervalId) {
-        clearInterval(intervalId);
-    }
+// Subscribe to odometry
+export async function subscribeToOdometry() {
+	try {
+		const response = await api.subscribeToOdometry();
+		return response.success === true;
+	} catch (error) {
+		console.error('Error subscribing to odometry:', error);
+		return false;
+	}
 }
 
-// Auto-check ROS status on module load
-if (typeof window !== 'undefined') {
-    checkRosStatus();
+// Get latest odometry data
+export async function getOdometry() {
+	try {
+		const response = await api.getOdometry();
+		return response.data || null;
+	} catch (error) {
+		console.error('Error getting odometry:', error);
+		return null;
+	}
 }

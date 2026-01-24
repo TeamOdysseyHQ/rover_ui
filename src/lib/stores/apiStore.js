@@ -1,71 +1,88 @@
-import { writable } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
+import * as roverApi from '$lib/services/roverApi';
 
-// Store for rover command history (for logging purposes)
-export const commandHistory = writable([]);
-
-// Store for API connection status
-export const apiStatus = writable('disconnected'); // 'connected' | 'disconnected' | 'error'
-
-// Store for rover API base URL
+// API connection status
+export const apiStatus = writable('disconnected'); // 'connected' | 'disconnected' | 'connecting' | 'error'
 export const roverApiUrl = writable('http://localhost:6767');
 
-/**
- * Test connection to rover API
- */
+// Command history for logging
+export const commandHistory = writable([]);
+
+// Auto-connect on initialization
+let autoConnectAttempted = false;
+
+// Test API connection
 export async function testConnection(url) {
-    try {
-        const response = await fetch(`${url}/api/o/test`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ ping: true })
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            if (data.success) {
-                apiStatus.set('connected');
-                roverApiUrl.set(url);
-                return true;
-            }
-        }
-        
-        apiStatus.set('error');
-        return false;
-    } catch (error) {
-        console.error('Connection test failed:', error);
-        apiStatus.set('error');
-        return false;
-    }
+	try {
+		apiStatus.set('connecting');
+		roverApiUrl.set(url);
+		
+		// Test the connection
+		const response = await fetch(`${url}/api/status`);
+		if (response.ok) {
+			apiStatus.set('connected');
+			return true;
+		} else {
+			apiStatus.set('error');
+			return false;
+		}
+	} catch (error) {
+		apiStatus.set('error');
+		return false;
+	}
 }
 
-/**
- * Disconnect from rover API
- */
+// Auto-connect to default URL
+export async function autoConnect() {
+	if (autoConnectAttempted) return;
+	autoConnectAttempted = true;
+	
+	const defaultUrl = 'http://localhost:6767';
+	console.log('[API] Attempting auto-connect to', defaultUrl);
+	
+	try {
+		const response = await fetch(`${defaultUrl}/api/status`, { 
+			method: 'GET',
+			// Short timeout for auto-connect
+			signal: AbortSignal.timeout(3000)
+		});
+		
+		if (response.ok) {
+			apiStatus.set('connected');
+			roverApiUrl.set(defaultUrl);
+			console.log('[API] Auto-connected successfully');
+			return true;
+		}
+	} catch (error) {
+		console.log('[API] Auto-connect failed, waiting for manual connection');
+	}
+	
+	return false;
+}
+
+// Initialize auto-connect (call this on app startup)
+if (typeof window !== 'undefined') {
+	// Delay auto-connect slightly to allow page to load
+	setTimeout(() => {
+		autoConnect();
+	}, 500);
+}
+
+// Disconnect from rover
 export function disconnectFromRover() {
-    apiStatus.set('disconnected');
+	apiStatus.set('disconnected');
 }
 
-/**
- * Log a command to history
- */
-export function logCommand(command, status = 'sent', response = null) {
-    const entry = {
-        id: crypto.randomUUID(),
-        command,
-        timestamp: new Date().toISOString(),
-        status, // 'sent' | 'success' | 'error'
-        response
-    };
-    
-    commandHistory.update(history => [...history, entry]);
-    return entry;
-}
-
-/**
- * Clear command history
- */
-export function clearCommandHistory() {
-    commandHistory.set([]);
+// Log a command to history
+export function logCommand(command, status, response = null) {
+	commandHistory.update(history => {
+		const newCommand = {
+			id: crypto.randomUUID(),
+			command,
+			timestamp: Date.now(),
+			status,
+			response
+		};
+		return [...history, newCommand].slice(-50); // Keep last 50 commands
+	});
 }
