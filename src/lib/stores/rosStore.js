@@ -1,8 +1,15 @@
 import { writable, derived } from 'svelte/store';
+import * as api from '$lib/services/roverApi.js';
 
 // ROS connection status
-export const rosStatus = writable('disconnected'); // 'connected' | 'disconnected' | 'connecting'
-export const isRosConnected = derived(rosStatus, $status => $status === 'connected');
+export const rosStatus = writable({
+	status: 'disconnected',
+	url: null,
+	subscribedTopics: [],
+	publishedTopics: [],
+	lastChecked: null
+});
+export const isRosConnected = derived(rosStatus, $status => $status.status === 'connected');
 
 // Teensy topic data
 export const teensyTopicData = writable(null);
@@ -10,11 +17,28 @@ export const teensyTopicData = writable(null);
 // Check ROS status
 export async function checkRosStatus() {
 	try {
-		// Implement your ROS status check here
-		// For now, return a mock response
-		return { connected: false };
+		const response = await api.getRosStatus();
+		const statusData = response.status || {};
+		const connected = statusData.connected === true;
+		
+		rosStatus.set({
+			status: connected ? 'connected' : 'disconnected',
+			url: statusData.url || null,
+			subscribedTopics: statusData.subscribed_topics || [],
+			publishedTopics: statusData.published_topics || [],
+			lastChecked: Date.now()
+		});
+		
+		return { connected };
 	} catch (error) {
 		console.error('Error checking ROS status:', error);
+		rosStatus.set({
+			status: 'disconnected',
+			url: null,
+			subscribedTopics: [],
+			publishedTopics: [],
+			lastChecked: Date.now()
+		});
 		return { connected: false };
 	}
 }
@@ -22,30 +46,37 @@ export async function checkRosStatus() {
 // Connect to ROS
 export async function connectToRos(rosUrl) {
 	try {
-		rosStatus.set('connecting');
-		// Implement your ROS connection logic here
-		// For now, simulate connection
-		await new Promise(resolve => setTimeout(resolve, 1000));
-		rosStatus.set('connected');
-		return { success: true };
+		rosStatus.update(s => ({ ...s, status: 'connecting' }));
+		const response = await api.connectToRos();
+		if (response.success) {
+			rosStatus.update(s => ({ ...s, status: 'connected', url: response.url }));
+			return { success: true };
+		} else {
+			rosStatus.update(s => ({ ...s, status: 'disconnected' }));
+			return { success: false, error: response.message || 'Connection failed' };
+		}
 	} catch (error) {
-		rosStatus.set('disconnected');
+		rosStatus.update(s => ({ ...s, status: 'disconnected' }));
 		return { success: false, error: error.message };
 	}
 }
 
 // Disconnect from ROS
-export function disconnectFromRos() {
-	rosStatus.set('disconnected');
+export async function disconnectFromRos() {
+	try {
+		await api.disconnectFromRos();
+		rosStatus.update(s => ({ ...s, status: 'disconnected', subscribedTopics: [], publishedTopics: [] }));
+	} catch (error) {
+		console.error('Error disconnecting from ROS:', error);
+		rosStatus.update(s => ({ ...s, status: 'disconnected' }));
+	}
 }
 
 // Stop the rover
 export async function stopRover() {
 	try {
-		// Implement your stop rover logic here
-		// Publish zero velocity to /cmd_vel
-		await publishCmdVel(0, 0);
-		return true;
+		const response = await api.stopRover();
+		return response.success === true;
 	} catch (error) {
 		console.error('Error stopping rover:', error);
 		return false;
@@ -53,26 +84,69 @@ export async function stopRover() {
 }
 
 // Publish command velocity to ROS
-export function publishCmdVel(linearX, angularZ) {
-	// Implement your ROS cmd_vel publishing logic here
-	console.log('Publishing cmd_vel:', { linear: { x: linearX }, angular: { z: angularZ } });
-	return Promise.resolve();
+export async function publishCmdVel(linearX, angularZ) {
+	try {
+		const velocityCommand = {
+			linear_x: linearX,
+			linear_y: 0.0,
+			linear_z: 0.0,
+			angular_x: 0.0,
+			angular_y: 0.0,
+			angular_z: angularZ
+		};
+		const response = await api.publishCmdVel(velocityCommand);
+		return response;
+	} catch (error) {
+		console.error('Error publishing cmd_vel:', error);
+		throw error;
+	}
 }
 
 // Start teensy topic updates
 export async function startTeensyTopicUpdates(rate) {
-	const intervalId = setInterval(() => {
-		// Mock teensy data - replace with actual ROS topic subscription
-		teensyTopicData.set({
-			data: Math.floor(Math.random() * 100)
-		});
+	const intervalId = setInterval(async () => {
+		try {
+			const response = await api.getTeensyTopic();
+			if (response.success && response.data) {
+				teensyTopicData.set(response.data);
+			}
+		} catch (error) {
+			console.error('Error fetching teensy topic data:', error);
+		}
 	}, rate);
 	
 	return intervalId;
 }
 
 // Stop teensy topic updates
-export function stopTeensyTopicUpdates(intervalId) {
+export async function stopTeensyTopicUpdates(intervalId) {
 	clearInterval(intervalId);
+	try {
+		await api.unsubscribeTeensyTopic();
+	} catch (error) {
+		console.error('Error unsubscribing from teensy topic:', error);
+	}
 	teensyTopicData.set(null);
+}
+
+// Subscribe to odometry
+export async function subscribeToOdometry() {
+	try {
+		const response = await api.subscribeToOdometry();
+		return response.success === true;
+	} catch (error) {
+		console.error('Error subscribing to odometry:', error);
+		return false;
+	}
+}
+
+// Get latest odometry data
+export async function getOdometry() {
+	try {
+		const response = await api.getOdometry();
+		return response.data || null;
+	} catch (error) {
+		console.error('Error getting odometry:', error);
+		return null;
+	}
 }
