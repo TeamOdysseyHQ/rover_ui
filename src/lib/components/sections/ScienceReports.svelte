@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FileText, Download, Loader2 } from 'lucide-svelte';
+	import { FileText, Download, Loader2, Trash2, AlertCircle } from 'lucide-svelte';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
@@ -9,7 +9,10 @@
 		downloadReportByPath,
 		listReportIds,
 		triggerDownload,
-		type ReportResponse
+		getReportsMetadata,
+		deleteReport,
+		type ReportResponse,
+		type ReportMetadata
 	} from '$lib/services/scienceReportService';
 
 	let inference = $state('');
@@ -18,8 +21,11 @@
 	let lastGeneratedReport = $state<ReportResponse | null>(null);
 	let statusMessage = $state('');
 	let statusType = $state<'success' | 'error' | 'info'>('info');
-	let availableReports = $state<string[]>([]);
+	let availableReports = $state<ReportMetadata[]>([]);
 	let showDownloadOptions = $state(false);
+	let downloadingReports = $state<Set<string>>(new Set());
+	let deletingReports = $state<Set<string>>(new Set());
+	let confirmDelete = $state<string | null>(null);
 
 	async function handleGenerateReport() {
 		if (!inference.trim()) {
@@ -37,13 +43,14 @@
 				lastGeneratedReport = result;
 				setStatus('Report generated successfully!', 'success');
 				inference = '';
-				loadAvailableReports();
+				await loadAvailableReports();
 			} else {
 				setStatus(`Failed: ${result.message}`, 'error');
 				lastGeneratedReport = null;
 			}
 		} catch (error) {
-			setStatus('An unexpected error occurred', 'error');
+			const errorMsg = error instanceof Error ? error.message : 'An unexpected error occurred';
+			setStatus(`Error: ${errorMsg}`, 'error');
 			lastGeneratedReport = null;
 		} finally {
 			isGenerating = false;
@@ -51,29 +58,44 @@
 	}
 
 	async function handleDownloadById(reportId: string) {
+		downloadingReports.add(reportId);
+		downloadingReports = downloadingReports;
 		setStatus(`Downloading report ${reportId}...`, 'info');
 
-		const blob = await downloadReportById(reportId);
+		try {
+			const blob = await downloadReportById(reportId);
 
-		if (blob) {
-			triggerDownload(blob, `${reportId}.pdf`);
-			setStatus('Download complete!', 'success');
-		} else {
-			setStatus('Failed to download report', 'error');
+			if (blob) {
+				triggerDownload(blob, `${reportId}.pdf`);
+				setStatus('Download complete!', 'success');
+			} else {
+				setStatus('Failed to download report', 'error');
+			}
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : 'Download failed';
+			setStatus(`Error: ${errorMsg}`, 'error');
+		} finally {
+			downloadingReports.delete(reportId);
+			downloadingReports = downloadingReports;
 		}
 	}
 
 	async function handleDownloadByPath(reportPath: string) {
 		setStatus('Downloading report by path...', 'info');
 
-		const blob = await downloadReportByPath(reportPath);
+		try {
+			const blob = await downloadReportByPath(reportPath);
 
-		if (blob) {
-			const filename = reportPath.split('/').pop() || 'report.pdf';
-			triggerDownload(blob, filename);
-			setStatus('Download complete!', 'success');
-		} else {
-			setStatus('Failed to download report', 'error');
+			if (blob) {
+				const filename = reportPath.split('/').pop() || 'report.pdf';
+				triggerDownload(blob, filename);
+				setStatus('Download complete!', 'success');
+			} else {
+				setStatus('Failed to download report', 'error');
+			}
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : 'Download failed';
+			setStatus(`Error: ${errorMsg}`, 'error');
 		}
 	}
 
@@ -89,11 +111,52 @@
 		showDownloadOptions = false;
 	}
 
+	async function handleDeleteReport(reportId: string) {
+		if (confirmDelete !== reportId) {
+			confirmDelete = reportId;
+			setStatus('Click delete again to confirm', 'info');
+			setTimeout(() => {
+				if (confirmDelete === reportId) {
+					confirmDelete = null;
+				}
+			}, 3000);
+			return;
+		}
+
+		deletingReports.add(reportId);
+		deletingReports = deletingReports;
+		confirmDelete = null;
+		setStatus(`Deleting report ${reportId}...`, 'info');
+
+		try {
+			const success = await deleteReport(reportId);
+
+			if (success) {
+				setStatus('Report deleted successfully!', 'success');
+				await loadAvailableReports();
+			} else {
+				setStatus('Failed to delete report', 'error');
+			}
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : 'Delete failed';
+			setStatus(`Error: ${errorMsg}`, 'error');
+		} finally {
+			deletingReports.delete(reportId);
+			deletingReports = deletingReports;
+		}
+	}
+
 	async function loadAvailableReports() {
 		isLoadingReports = true;
-		const reports = await listReportIds();
-		availableReports = reports;
-		isLoadingReports = false;
+		try {
+			const reports = await getReportsMetadata();
+			availableReports = reports;
+		} catch (error) {
+			console.error('Failed to load reports:', error);
+			setStatus('Failed to load reports', 'error');
+		} finally {
+			isLoadingReports = false;
+		}
 	}
 
 	function setStatus(message: string, type: 'success' | 'error' | 'info') {
@@ -114,6 +177,23 @@
 			default:
 				return 'text-sky-400';
 		}
+	}
+
+	function formatFileSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+	}
+
+	function formatDate(isoString: string): string {
+		const date = new Date(isoString);
+		return date.toLocaleString('en-US', {
+			month: 'short',
+			day: 'numeric',
+			year: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
 	}
 
 	$effect(() => {
@@ -255,19 +335,53 @@
 				</div>
 			{:else}
 				<div class="reports-list">
-					{#each availableReports as reportId}
+					{#each availableReports as report}
 						<div class="report-item">
-							<div class="report-item-info">
-								<FileText class="w-4 h-4 text-sky-400" />
-								<span class="report-id">{reportId}</span>
+							<div class="report-item-content">
+								<div class="report-item-header">
+									<FileText class="w-4 h-4 text-sky-400" />
+									<span class="report-id">{report.report_id.slice(0, 16)}...</span>
+								</div>
+								<div class="report-metadata">
+									<span class="metadata-item">
+										<span class="metadata-label">Size:</span>
+										<span class="metadata-value">{formatFileSize(report.size_bytes)}</span>
+									</span>
+									<span class="metadata-item">
+										<span class="metadata-label">Created:</span>
+										<span class="metadata-value">{formatDate(report.created_at)}</span>
+									</span>
+								</div>
 							</div>
-							<Button
-								variant="ghost"
-								size="sm"
-								onclick={() => handleDownloadById(reportId)}
-							>
-								<Download class="w-4 h-4" />
-							</Button>
+							<div class="report-actions">
+								<Button
+									variant="ghost"
+									size="sm"
+									onclick={() => handleDownloadById(report.report_id)}
+									disabled={downloadingReports.has(report.report_id)}
+								>
+									{#if downloadingReports.has(report.report_id)}
+										<Loader2 class="w-4 h-4 animate-spin" />
+									{:else}
+										<Download class="w-4 h-4" />
+									{/if}
+								</Button>
+								<Button
+									variant="ghost"
+									size="sm"
+									onclick={() => handleDeleteReport(report.report_id)}
+									disabled={deletingReports.has(report.report_id)}
+									class={confirmDelete === report.report_id ? 'text-red-400' : ''}
+								>
+									{#if deletingReports.has(report.report_id)}
+										<Loader2 class="w-4 h-4 animate-spin" />
+									{:else if confirmDelete === report.report_id}
+										<AlertCircle class="w-4 h-4" />
+									{:else}
+										<Trash2 class="w-4 h-4" />
+									{/if}
+								</Button>
+							</div>
 						</div>
 					{/each}
 				</div>
@@ -389,12 +503,18 @@
 		border-color: var(--sky-blue);
 	}
 
-	.report-item-info {
+	.report-item-content {
 		display: flex;
-		align-items: center;
+		flex-direction: column;
 		gap: 0.5rem;
 		flex: 1;
 		min-width: 0;
+	}
+
+	.report-item-header {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.report-id {
@@ -404,6 +524,40 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.report-metadata {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem;
+		font-size: 0.75rem;
+	}
+
+	.metadata-item {
+		display: flex;
+		gap: 0.25rem;
+	}
+
+	.metadata-label {
+		color: var(--slate-500);
+		font-weight: 600;
+	}
+
+	.metadata-value {
+		color: var(--slate-400);
+	}
+
+	.report-actions {
+		display: flex;
+		gap: 0.25rem;
+	}
+
+	.report-item-info {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex: 1;
+		min-width: 0;
 	}
 
 	.loading-state,
