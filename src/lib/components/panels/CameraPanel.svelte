@@ -10,7 +10,7 @@
 	
 	// Camera state - Svelte 5 runes
 	let cameras = $state<any[]>([]);
-	let activeCameras = $state<Set<number>>(new Set());
+	let activeCameras = $state<Set<string>>(new Set());
 	let loading = $state(false);
 	let error = $state<string | null>(null);
 	let feedbackMessage = $state('');
@@ -18,16 +18,16 @@
 	let showFeedback = $state(false);
 	
 	// Streaming mode per camera: 'mjpeg' or 'websocket'
-	let streamingModes = $state<Map<number, 'mjpeg' | 'websocket'>>(new Map());
+	let streamingModes = $state<Map<string, 'mjpeg' | 'websocket'>>(new Map());
 	
 	// WebSocket clients per camera
-	let wsClients = $state<Map<number, VideoStreamClient>>(new Map());
+	let wsClients = $state<Map<string, VideoStreamClient>>(new Map());
 	
 	// Stream metrics per camera
-	let streamMetrics = $state<Map<number, StreamMetrics>>(new Map());
+	let streamMetrics = $state<Map<string, StreamMetrics>>(new Map());
 	
 	// Canvas refs per camera
-	let canvasRefs: Record<number, HTMLCanvasElement | undefined> = $state({});
+	let canvasRefs: Record<string, HTMLCanvasElement | undefined> = $state({});
 	
 	// Telemetry for captures
 	let telemetry = $state({
@@ -62,8 +62,8 @@
 			
 			// Initialize streaming mode for each camera (default to WebSocket)
 			cameras.forEach(cam => {
-				if (!streamingModes.has(cam.index)) {
-					streamingModes.set(cam.index, 'websocket');
+				if (!streamingModes.has(cam.name)) {
+					streamingModes.set(cam.name, 'websocket');
 				}
 			});
 			streamingModes = new Map(streamingModes);
@@ -77,56 +77,56 @@
 	}
 	
 	// Start a camera
-	async function startCamera(cameraIndex: number) {
+	async function startCamera(cameraName: string) {
 		try {
-			const result = await roverApi.startCamera(cameraIndex, 1280, 720, 30);
-			activeCameras.add(cameraIndex);
+			const result = await roverApi.startCamera(cameraName, 1280, 720, 30);
+			activeCameras.add(cameraName);
 			activeCameras = new Set(activeCameras);
 			
 			// Start streaming based on mode
-			const mode = streamingModes.get(cameraIndex) || 'websocket';
+			const mode = streamingModes.get(cameraName) || 'websocket';
 			if (mode === 'websocket') {
 				// Wait for canvas to be rendered before connecting WebSocket
 				setTimeout(() => {
-					startWebSocketStream(cameraIndex);
+					startWebSocketStream(cameraName);
 				}, 100);
 			}
 			
-			showFeedbackMsg(`Camera ${cameraIndex} started (${mode.toUpperCase()})`, 'success');
+			showFeedbackMsg(`Camera '${cameraName}' started (${mode.toUpperCase()})`, 'success');
 		} catch (err: any) {
-			showFeedbackMsg(`Failed to start camera ${cameraIndex}: ${err.message}`, 'error');
+			showFeedbackMsg(`Failed to start camera '${cameraName}': ${err.message}`, 'error');
 		}
 	}
 	
 	// Stop a camera
-	async function stopCamera(cameraIndex: number) {
+	async function stopCamera(cameraName: string) {
 		try {
 			// Stop WebSocket if active
-			stopWebSocketStream(cameraIndex);
+			stopWebSocketStream(cameraName);
 			
-			await roverApi.stopCamera(cameraIndex);
-			activeCameras.delete(cameraIndex);
+			await roverApi.stopCamera(cameraName);
+			activeCameras.delete(cameraName);
 			activeCameras = new Set(activeCameras);
-			showFeedbackMsg(`Camera ${cameraIndex} stopped`, 'success');
+			showFeedbackMsg(`Camera '${cameraName}' stopped`, 'success');
 		} catch (err: any) {
-			showFeedbackMsg(`Failed to stop camera ${cameraIndex}: ${err.message}`, 'error');
+			showFeedbackMsg(`Failed to stop camera '${cameraName}': ${err.message}`, 'error');
 		}
 	}
 	
 	// Start WebSocket stream
-	function startWebSocketStream(cameraIndex: number) {
-		console.log(`[CameraPanel] Starting WebSocket stream for camera ${cameraIndex}`);
+	function startWebSocketStream(cameraName: string) {
+		console.log(`[CameraPanel] Starting WebSocket stream for camera '${cameraName}'`);
 		
 		// Get or create canvas
-		const canvas = canvasRefs[cameraIndex];
+		const canvas = canvasRefs[cameraName];
 		if (!canvas) {
-			console.error(`[CameraPanel] Canvas not found for camera ${cameraIndex}`);
+			console.error(`[CameraPanel] Canvas not found for camera '${cameraName}'`);
 			console.error(`[CameraPanel] Available canvas refs:`, Object.keys(canvasRefs));
 			showFeedbackMsg(`Failed to start WebSocket: Canvas element not ready`, 'error');
 			return;
 		}
 		
-		console.log(`[CameraPanel] Canvas found for camera ${cameraIndex}:`, canvas);
+		console.log(`[CameraPanel] Canvas found for camera '${cameraName}':`, canvas);
 		
 		// Create WebSocket client
 		const client = new VideoStreamClient({
@@ -137,67 +137,67 @@
 		
 		// Setup callbacks
 		client.onMetrics((metrics) => {
-			streamMetrics.set(cameraIndex, metrics);
+			streamMetrics.set(cameraName, metrics);
 			streamMetrics = new Map(streamMetrics);
 		});
 		
 		client.onStateChange((state) => {
-			console.log(`[CameraPanel] Camera ${cameraIndex} state: ${state}`);
+			console.log(`[CameraPanel] Camera '${cameraName}' state: ${state}`);
 		});
 		
 		client.onError((error) => {
-			console.error(`[CameraPanel] Camera ${cameraIndex} error:`, error);
+			console.error(`[CameraPanel] Camera '${cameraName}' error:`, error);
 			showFeedbackMsg(`Stream error: ${error.message}`, 'error');
 		});
 		
 		// Connect
-		console.log(`[CameraPanel] Connecting WebSocket for camera ${cameraIndex}...`);
-		client.connect(cameraIndex, canvas).catch((error) => {
+		console.log(`[CameraPanel] Connecting WebSocket for camera '${cameraName}'...`);
+		client.connect(cameraName, canvas).catch((error) => {
 			console.error(`[CameraPanel] Failed to connect WebSocket:`, error);
 			showFeedbackMsg(`Failed to connect WebSocket: ${error.message}`, 'error');
 		});
 		
-		wsClients.set(cameraIndex, client);
+		wsClients.set(cameraName, client);
 		wsClients = new Map(wsClients);
-		console.log(`[CameraPanel] WebSocket client created for camera ${cameraIndex}`);
+		console.log(`[CameraPanel] WebSocket client created for camera '${cameraName}'`);
 	}
 	
 	// Stop WebSocket stream
-	function stopWebSocketStream(cameraIndex: number) {
-		const client = wsClients.get(cameraIndex);
+	function stopWebSocketStream(cameraName: string) {
+		const client = wsClients.get(cameraName);
 		if (client) {
 			client.disconnect();
-			wsClients.delete(cameraIndex);
+			wsClients.delete(cameraName);
 			wsClients = new Map(wsClients);
-			streamMetrics.delete(cameraIndex);
+			streamMetrics.delete(cameraName);
 			streamMetrics = new Map(streamMetrics);
 		}
 	}
 	
 	// Toggle streaming mode
-	function toggleStreamingMode(cameraIndex: number) {
-		const currentMode = streamingModes.get(cameraIndex) || 'websocket';
+	function toggleStreamingMode(cameraName: string) {
+		const currentMode = streamingModes.get(cameraName) || 'websocket';
 		const newMode = currentMode === 'mjpeg' ? 'websocket' : 'mjpeg';
 		
 		// If camera is active, restart with new mode
-		if (activeCameras.has(cameraIndex)) {
+		if (activeCameras.has(cameraName)) {
 			if (currentMode === 'websocket') {
-				stopWebSocketStream(cameraIndex);
+				stopWebSocketStream(cameraName);
 			}
 			if (newMode === 'websocket') {
-				startWebSocketStream(cameraIndex);
+				startWebSocketStream(cameraName);
 			}
 		}
 		
-		streamingModes.set(cameraIndex, newMode);
+		streamingModes.set(cameraName, newMode);
 		streamingModes = new Map(streamingModes);
 		showFeedbackMsg(`Switched to ${newMode.toUpperCase()} mode`, 'success');
 	}
 	
 	// Capture image from camera
-	async function captureImage(cameraIndex: number) {
+	async function captureImage(cameraName: string) {
 		try {
-			const result = await roverApi.captureCameraImage(cameraIndex, telemetry);
+			const result = await roverApi.captureCameraImage(cameraName, telemetry);
 			showFeedbackMsg(`Image captured: ${result.saved} (${result.file_size_mb} MB)`, 'success');
 		} catch (err: any) {
 			showFeedbackMsg(`Failed to capture image: ${err.message}`, 'error');
@@ -224,13 +224,13 @@
 	}
 	
 	// Get camera stream URL (MJPEG)
-	function getStreamUrl(cameraIndex: number) {
-		return roverApi.getCameraStreamUrl(cameraIndex);
+	function getStreamUrl(cameraName: string) {
+		return roverApi.getCameraStreamUrl(cameraName);
 	}
 	
 	// Get metrics for camera
-	function getMetrics(cameraIndex: number): StreamMetrics | null {
-		return streamMetrics.get(cameraIndex) || null;
+	function getMetrics(cameraName: string): StreamMetrics | null {
+		return streamMetrics.get(cameraName) || null;
 	}
 	
 	// Lifecycle - using $effect instead of onMount/onDestroy
@@ -316,20 +316,20 @@
 			<!-- Camera Grid -->
 			{:else}
 			<div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-				{#each cameras as camera}
-				{@const mode = streamingModes.get(camera.index) || 'websocket'}
-				{@const metrics = getMetrics(camera.index)}
+				{#each cameras.filter(cam => cam.name !== 'microscope') as camera}
+				{@const mode = streamingModes.get(camera.name) || 'websocket'}
+				{@const metrics = getMetrics(camera.name)}
 				<div class="bg-secondary rounded-lg border border-border overflow-hidden">
 					<!-- Camera Header -->
 					<div class="p-3 bg-card border-b border-border flex justify-between items-center">
 						<div>
-							<h3 class="font-semibold text-foreground">Camera {camera.index}</h3>
+							<h3 class="font-semibold text-foreground">{camera.name}</h3>
 							<p class="text-xs text-muted-foreground">
 								{camera.default_resolution} @ {camera.default_fps}fps | {camera.backend}
 							</p>
 						</div>
 						<div class="flex items-center gap-2">
-							{#if activeCameras.has(camera.index)}
+							{#if activeCameras.has(camera.name)}
 							<span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
 							<Badge variant="success" class="text-xs">Active</Badge>
 							{:else}
@@ -355,8 +355,8 @@
 						<Button 
 							variant="ghost"
 							size="sm"
-							onclick={() => toggleStreamingMode(camera.index)}
-							disabled={activeCameras.has(camera.index)}
+							onclick={() => toggleStreamingMode(camera.name)}
+							disabled={activeCameras.has(camera.name)}
 							class="h-6 text-xs"
 						>
 							Switch
@@ -364,7 +364,7 @@
 					</div>
 					
 					<!-- Performance Metrics (WebSocket only) -->
-					{#if activeCameras.has(camera.index) && mode === 'websocket' && metrics}
+					{#if activeCameras.has(camera.name) && mode === 'websocket' && metrics}
 					<div class="px-3 py-1.5 bg-black/30 border-b border-border flex items-center justify-between text-xs font-mono">
 						<div class="flex items-center gap-3">
 							<span class="text-muted-foreground">FPS: <span class="text-sky-500">{metrics.fps.toFixed(1)}</span></span>
@@ -381,11 +381,11 @@
 					
 					<!-- Camera Stream or Placeholder -->
 					<div class="relative bg-black aspect-video">
-						{#if activeCameras.has(camera.index)}
+						{#if activeCameras.has(camera.name)}
 							{#if mode === 'websocket'}
 							<!-- WebSocket Canvas -->
 							<canvas
-								bind:this={canvasRefs[camera.index]}
+								bind:this={canvasRefs[camera.name]}
 								width="1280"
 								height="720"
 								class="w-full h-full object-contain"
@@ -397,8 +397,8 @@
 							{:else}
 							<!-- MJPEG Image -->
 							<img 
-								src={getStreamUrl(camera.index)}
-								alt="Camera {camera.index} Stream"
+								src={getStreamUrl(camera.name)}
+								alt="{camera.name} Stream"
 								class="w-full h-full object-contain"
 							/>
 							<div class="absolute top-2 left-2 bg-destructive text-white text-xs px-2 py-1 rounded font-mono">
@@ -418,12 +418,12 @@
 					<!-- Camera Controls -->
 					<div class="p-3 bg-card border-t border-border">
 						<div class="flex gap-2">
-							{#if activeCameras.has(camera.index)}
+							{#if activeCameras.has(camera.name)}
 							<Button 
 								variant="secondary"
 								size="sm"
 								class="flex-1"
-								onclick={() => captureImage(camera.index)}
+								onclick={() => captureImage(camera.name)}
 								disabled={$apiStatus !== 'connected'}
 							>
 								<ImageIcon class="w-4 h-4 mr-1" />
@@ -432,7 +432,7 @@
 							<Button 
 								variant="secondary"
 								size="sm"
-								onclick={() => stopCamera(camera.index)}
+								onclick={() => stopCamera(camera.name)}
 								disabled={$apiStatus !== 'connected'}
 							>
 								<PowerOff class="w-4 h-4" />
@@ -442,7 +442,7 @@
 								variant="default"
 								size="sm"
 								class="flex-1"
-								onclick={() => startCamera(camera.index)}
+								onclick={() => startCamera(camera.name)}
 								disabled={$apiStatus !== 'connected'}
 							>
 								<Power class="w-4 h-4 mr-1" />

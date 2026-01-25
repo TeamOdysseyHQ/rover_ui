@@ -149,7 +149,7 @@
 			<!-- Section 2: Report Generator -->
 			<Card.Root class="bg-card border-border">
 				<Card.Header class="border-b border-border">
-					<Card.Title>Science Report Generator</Card.Title>
+					<Card.Title>Inference Input</Card.Title>
 				</Card.Header>
 				<Card.Content class="space-y-4 pt-4">
 					<div class="space-y-2">

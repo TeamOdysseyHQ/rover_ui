@@ -29,7 +29,6 @@
 </script>
 
 <div class="idmo-mission space-y-6">
-	<!-- Mission Stage -->
 	<Card>
 		<CardHeader>
 			<CardTitle>Mission Stage</CardTitle>

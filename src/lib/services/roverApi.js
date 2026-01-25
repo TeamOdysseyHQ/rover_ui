@@ -246,13 +246,13 @@ export async function detectCameras(maxCameras = 10) {
 /**
  * Start a specific camera
  */
-export async function startCamera(cameraIndex, width = 1280, height = 720, fps = 30) {
+export async function startCamera(cameraName, width = 1280, height = 720, fps = 30) {
     const formData = new FormData();
     formData.append('width', width.toString());
     formData.append('height', height.toString());
     formData.append('fps', fps.toString());
     
-    const url = `${API_BASE_URL}/api/nav/cameras/${cameraIndex}/start`;
+    const url = `${API_BASE_URL}/api/nav/cameras/${cameraName}/start`;
     const response = await fetch(url, {
         method: 'POST',
         body: formData
@@ -268,8 +268,8 @@ export async function startCamera(cameraIndex, width = 1280, height = 720, fps =
 /**
  * Stop a specific camera
  */
-export async function stopCamera(cameraIndex) {
-    const url = `${API_BASE_URL}/api/nav/cameras/${cameraIndex}/stop`;
+export async function stopCamera(cameraName) {
+    const url = `${API_BASE_URL}/api/nav/cameras/${cameraName}/stop`;
     const response = await fetch(url, {
         method: 'POST'
     });
@@ -307,14 +307,14 @@ export async function getCamerasStatus() {
 /**
  * Get specific camera status
  */
-export async function getCameraStatus(cameraIndex) {
-    return apiRequest(`/api/nav/cameras/${cameraIndex}/status`, { method: 'GET' });
+export async function getCameraStatus(cameraName) {
+    return apiRequest(`/api/nav/cameras/${cameraName}/status`, { method: 'GET' });
 }
 
 /**
  * Capture image from a specific camera
  */
-export async function captureCameraImage(cameraIndex, telemetry = {}) {
+export async function captureCameraImage(cameraName, telemetry = {}) {
     const formData = new FormData();
     
     // Add telemetry data
@@ -322,7 +322,7 @@ export async function captureCameraImage(cameraIndex, telemetry = {}) {
         formData.append(key, value.toString());
     });
     
-    const url = `${API_BASE_URL}/api/nav/cameras/${cameraIndex}/capture`;
+    const url = `${API_BASE_URL}/api/nav/cameras/${cameraName}/capture`;
     const response = await fetch(url, {
         method: 'POST',
         body: formData
@@ -338,17 +338,17 @@ export async function captureCameraImage(cameraIndex, telemetry = {}) {
 /**
  * Get camera stream URL (MJPEG)
  */
-export function getCameraStreamUrl(cameraIndex) {
-    return `${API_BASE_URL}/api/nav/cameras/${cameraIndex}/stream`;
+export function getCameraStreamUrl(cameraName) {
+    return `${API_BASE_URL}/api/nav/cameras/${cameraName}/stream`;
 }
 
 /**
  * Get camera WebSocket stream URL
  */
-export function getCameraWebSocketUrl(cameraIndex, quality = 85, fps = 30) {
+export function getCameraWebSocketUrl(cameraName, quality = 85, fps = 30) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = API_BASE_URL.replace(/^https?:\/\//, '');
-    return `${protocol}//${host}/api/nav/cameras/${cameraIndex}/ws?quality=${quality}&fps=${fps}`;
+    return `${protocol}//${host}/api/nav/cameras/${cameraName}/ws?quality=${quality}&fps=${fps}`;
 }
 
 /**
@@ -361,8 +361,8 @@ export async function getWebSocketStatus() {
 /**
  * Get WebSocket streaming status for specific camera
  */
-export async function getCameraWebSocketStatus(cameraIndex) {
-    return apiRequest(`/api/nav/cameras/${cameraIndex}/ws/status`, { method: 'GET' });
+export async function getCameraWebSocketStatus(cameraName) {
+    return apiRequest(`/api/nav/cameras/${cameraName}/ws/status`, { method: 'GET' });
 }
 
 // ============================================

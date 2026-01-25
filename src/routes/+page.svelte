@@ -102,7 +102,7 @@
 			<div class="space-y-6 xl:col-span-1">
 				<ConnectionPanel />
 				
-				<TeensyTopicPanel />
+				<!-- <TeensyTopicPanel /> -->
 				
 				<!-- Mission-Specific Panel -->
 				{#if activeMission === 'abex'}

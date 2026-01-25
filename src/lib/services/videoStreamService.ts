@@ -86,7 +86,7 @@ export class VideoStreamClient {
 	private ctx: CanvasRenderingContext2D | null = null;
 	private config: Required<StreamConfig>;
 	private state: ConnectionState = 'disconnected';
-	private cameraIndex: number | null = null;
+	private cameraName: string | null = null;
 	private intentionalDisconnect: boolean = false;
 
 	// Metrics tracking
@@ -124,7 +124,7 @@ export class VideoStreamClient {
 	/**
 	 * Connect to WebSocket video stream
 	 */
-	async connect(cameraIndex: number, canvas?: HTMLCanvasElement): Promise<void> {
+	async connect(cameraName: string, canvas?: HTMLCanvasElement): Promise<void> {
 		if (this.state === 'connected' || this.state === 'connecting') {
 			console.warn('Already connected or connecting');
 			return;
@@ -140,12 +140,14 @@ export class VideoStreamClient {
 		}
 
 		this.setState('connecting');
-		this.cameraIndex = cameraIndex;
+		this.cameraName = cameraName;
 
-		// Build WebSocket URL
-		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const host = 'localhost:6767'; // TODO: Use environment variable
-		const url = `${protocol}//${host}/api/nav/cameras/${cameraIndex}/ws?quality=${this.config.quality}&fps=${this.config.fps}`;
+		// Build WebSocket URL from API base URL
+		// Import dynamically to avoid circular dependency
+		const { getApiBaseUrl } = await import('$lib/services/roverApi');
+		const baseUrl = getApiBaseUrl();
+		const wsUrl = baseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
+		const url = `${wsUrl}/api/nav/cameras/${cameraName}/ws?quality=${this.config.quality}&fps=${this.config.fps}`;
 
 		try {
 			this.ws = new WebSocket(url);
@@ -472,12 +474,12 @@ export class VideoStreamClient {
 		}
 
 		// Only auto-reconnect if not intentionally disconnected
-		if (!this.intentionalDisconnect && this.config.autoReconnect && event.code !== 1000 && this.cameraIndex !== null) {
+		if (!this.intentionalDisconnect && this.config.autoReconnect && event.code !== 1000 && this.cameraName !== null) {
 			console.log(`[VideoStream] Reconnecting in ${this.config.reconnectDelay}ms...`);
 			this.reconnectTimeout = window.setTimeout(() => {
-				if (this.cameraIndex !== null) {
-					console.log(`[VideoStream] Attempting to reconnect to camera ${this.cameraIndex}...`);
-					this.connect(this.cameraIndex, this.canvas || undefined).catch((err) => {
+				if (this.cameraName !== null) {
+					console.log(`[VideoStream] Attempting to reconnect to camera '${this.cameraName}'...`);
+					this.connect(this.cameraName, this.canvas || undefined).catch((err) => {
 						console.error('[VideoStream] Reconnection failed:', err);
 						this.onErrorCallback?.(err);
 					});
