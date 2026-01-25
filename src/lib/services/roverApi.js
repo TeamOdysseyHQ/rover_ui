@@ -244,6 +244,22 @@ export async function detectCameras(maxCameras = 10) {
 }
 
 /**
+ * Get supported resolutions for a specific camera
+ */
+export async function getSupportedResolutions(cameraName) {
+    const url = `${API_BASE_URL}/api/nav/cameras/${cameraName}/resolutions`;
+    const response = await fetch(url, {
+        method: 'GET'
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+}
+
+/**
  * Start a specific camera
  */
 export async function startCamera(cameraName, width = 1280, height = 720, fps = 30) {

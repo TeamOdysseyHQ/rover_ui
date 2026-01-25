@@ -29,6 +29,10 @@
 	// Canvas refs per camera
 	let canvasRefs: Record<string, HTMLCanvasElement | undefined> = $state({});
 	
+	// Resolution state per camera
+	let supportedResolutions = $state<Map<string, Array<{width: number, height: number}>>>(new Map());
+	let selectedResolutions = $state<Map<string, {width: number, height: number}>>(new Map());
+	
 	// Telemetry for captures
 	let telemetry = $state({
 		latitude: 16.5062,
@@ -67,6 +71,9 @@
 				}
 			});
 			streamingModes = new Map(streamingModes);
+			
+			// Fetch supported resolutions for each camera
+			await fetchAllResolutions();
 		} catch (err: any) {
 			error = err.message;
 			showFeedbackMsg(`Failed to detect cameras: ${err.message}`, 'error');
@@ -76,10 +83,54 @@
 		}
 	}
 	
+	// Fetch supported resolutions for all detected cameras
+	async function fetchAllResolutions() {
+		await Promise.all(cameras.map(async (camera) => {
+			try {
+				const result = await roverApi.getSupportedResolutions(camera.name);
+				if (result.formats?.length > 0) {
+					// Flatten resolutions from all formats, removing duplicates
+					const allResolutions = result.formats
+						.flatMap((f: any) => f.resolutions)
+						.filter((r: any, i: number, arr: any[]) => 
+							arr.findIndex(x => x.width === r.width && x.height === r.height) === i
+						);
+					
+					// Sort by resolution (largest first)
+					allResolutions.sort((a: any, b: any) => (b.width * b.height) - (a.width * a.height));
+					
+					supportedResolutions.set(camera.name, allResolutions);
+					
+					// Set default resolution (720p if available, otherwise first one)
+					const default720p = allResolutions.find((r: any) => r.width === 1280 && r.height === 720);
+					const defaultRes = default720p || allResolutions[0] || { width: 1280, height: 720 };
+					selectedResolutions.set(camera.name, defaultRes);
+				}
+			} catch (e) {
+				console.warn(`Failed to get resolutions for ${camera.name}:`, e);
+				// Set fallback resolutions
+				const fallback = [
+					{ width: 1920, height: 1080 },
+					{ width: 1280, height: 720 },
+					{ width: 640, height: 480 },
+					{ width: 320, height: 240 }
+				];
+				supportedResolutions.set(camera.name, fallback);
+				selectedResolutions.set(camera.name, { width: 1280, height: 720 });
+			}
+		}));
+		
+		// Trigger reactivity
+		supportedResolutions = new Map(supportedResolutions);
+		selectedResolutions = new Map(selectedResolutions);
+	}
+	
 	// Start a camera
 	async function startCamera(cameraName: string) {
 		try {
-			const result = await roverApi.startCamera(cameraName, 1280, 720, 30);
+			// Get selected resolution, or use default
+			const resolution = selectedResolutions.get(cameraName) || { width: 1280, height: 720 };
+			const result = await roverApi.startCamera(cameraName, resolution.width, resolution.height, 30);
 			activeCameras.add(cameraName);
 			activeCameras = new Set(activeCameras);
 			
@@ -92,7 +143,7 @@
 				}, 100);
 			}
 			
-			showFeedbackMsg(`Camera '${cameraName}' started (${mode.toUpperCase()})`, 'success');
+			showFeedbackMsg(`Camera '${cameraName}' started at ${resolution.width}x${resolution.height} (${mode.toUpperCase()})`, 'success');
 		} catch (err: any) {
 			showFeedbackMsg(`Failed to start camera '${cameraName}': ${err.message}`, 'error');
 		}
@@ -192,6 +243,28 @@
 		streamingModes.set(cameraName, newMode);
 		streamingModes = new Map(streamingModes);
 		showFeedbackMsg(`Switched to ${newMode.toUpperCase()} mode`, 'success');
+	}
+	
+	// Handle resolution change
+	async function handleResolutionChange(cameraName: string, resolutionKey: string) {
+		const [width, height] = resolutionKey.split('x').map(Number);
+		selectedResolutions.set(cameraName, { width, height });
+		selectedResolutions = new Map(selectedResolutions);
+		
+		// If camera is active, restart with new resolution
+		if (activeCameras.has(cameraName)) {
+			showFeedbackMsg(`Restarting camera with ${width}x${height}...`, 'success');
+			await stopCamera(cameraName);
+			// Small delay to ensure camera is fully stopped
+			await new Promise(resolve => setTimeout(resolve, 300));
+			await startCamera(cameraName);
+		}
+	}
+	
+	// Get resolution key for select value
+	function getResolutionKey(cameraName: string): string {
+		const res = selectedResolutions.get(cameraName) || { width: 1280, height: 720 };
+		return `${res.width}x${res.height}`;
 	}
 	
 	// Capture image from camera
@@ -363,6 +436,39 @@
 						</Button>
 					</div>
 					
+					<!-- Resolution Selector -->
+					<div class="px-3 py-2 bg-card/50 border-b border-border flex items-center justify-between">
+						<label for={`resolution-${camera.name}`} class="text-xs text-muted-foreground">
+							Resolution
+						</label>
+						<select
+							id={`resolution-${camera.name}`}
+							class="bg-secondary border border-border rounded-md px-2 py-1 text-xs text-foreground"
+							value={getResolutionKey(camera.name)}
+							onchange={(e) => handleResolutionChange(camera.name, e.currentTarget.value)}
+							disabled={!supportedResolutions.has(camera.name) || supportedResolutions.get(camera.name)?.length === 0}
+						>
+							{#if supportedResolutions.has(camera.name)}
+								{#each supportedResolutions.get(camera.name) || [] as res}
+									<option value="{res.width}x{res.height}">
+										{res.width}×{res.height}
+										{#if res.width === 1920 && res.height === 1080}
+											(1080p)
+										{:else if res.width === 1280 && res.height === 720}
+											(720p)
+										{:else if res.width === 640 && res.height === 480}
+											(480p)
+										{:else if res.width === 320 && res.height === 240}
+											(240p)
+										{/if}
+									</option>
+								{/each}
+							{:else}
+								<option value="1280x720">1280×720 (720p)</option>
+							{/if}
+						</select>
+					</div>
+					
 					<!-- Performance Metrics (WebSocket only) -->
 					{#if activeCameras.has(camera.name) && mode === 'websocket' && metrics}
 					<div class="px-3 py-1.5 bg-black/30 border-b border-border flex items-center justify-between text-xs font-mono">
@@ -384,10 +490,11 @@
 						{#if activeCameras.has(camera.name)}
 							{#if mode === 'websocket'}
 							<!-- WebSocket Canvas -->
+							{@const resolution = selectedResolutions.get(camera.name) || { width: 1280, height: 720 }}
 							<canvas
 								bind:this={canvasRefs[camera.name]}
-								width="1280"
-								height="720"
+								width={resolution.width}
+								height={resolution.height}
 								class="w-full h-full object-contain"
 							></canvas>
 							<div class="absolute top-2 left-2 bg-sky-500 text-white text-xs px-2 py-1 rounded font-mono flex items-center gap-1">
