@@ -165,6 +165,43 @@ export class VideoStreamClient {
 	}
 
 	/**
+	 * Connect to custom WebSocket URL (for microscope or other devices)
+	 */
+	async connectCustom(wsUrl: string, canvas?: HTMLCanvasElement): Promise<void> {
+		if (this.state === 'connected' || this.state === 'connecting') {
+			console.warn('Already connected or connecting');
+			return;
+		}
+
+		// Reset intentional disconnect flag
+		this.intentionalDisconnect = false;
+
+		// Store canvas reference
+		if (canvas) {
+			this.canvas = canvas;
+			this.ctx = canvas.getContext('2d', { alpha: false });
+		}
+
+		this.setState('connecting');
+
+		try {
+			this.ws = new WebSocket(wsUrl);
+			this.ws.binaryType = 'arraybuffer';
+
+			// Setup event handlers
+			this.ws.onopen = () => this.handleOpen();
+			this.ws.onmessage = (event) => this.handleMessage(event);
+			this.ws.onerror = (event) => this.handleError(event);
+			this.ws.onclose = (event) => this.handleClose(event);
+		} catch (error) {
+			this.setState('error');
+			const err = error instanceof Error ? error : new Error(String(error));
+			this.onErrorCallback?.(err);
+			throw err;
+		}
+	}
+
+	/**
 	 * Disconnect from WebSocket stream
 	 */
 	disconnect(): void {
@@ -304,17 +341,42 @@ export class VideoStreamClient {
 
 	private handleFrame(arrayBuffer: ArrayBuffer): void {
 		try {
-			// Decode frame
-			const frame = decodeFrame(arrayBuffer);
+			// Check if this is a simple JPEG (microscope) or complex header format (camera)
+			let jpegBlob: Blob;
+			let latencyMs = 0;
+			
+			// Try to decode as complex format first
+			if (arrayBuffer.byteLength >= HEADER_SIZE) {
+				const view = new DataView(arrayBuffer);
+				const magic = view.getUint32(0, true);
+				
+				if (magic === MAGIC_NUMBER) {
+					// Complex format with header
+					const frame = decodeFrame(arrayBuffer);
+					jpegBlob = frame.jpegData;
+					latencyMs = frame.latencyMs;
+					
+					// Call frame callback if registered
+					this.onFrameCallback?.(frame);
+				} else {
+					// Simple JPEG format (microscope)
+					jpegBlob = new Blob([arrayBuffer], { type: 'image/jpeg' });
+				}
+			} else {
+				// Too small for header, must be simple JPEG
+				jpegBlob = new Blob([arrayBuffer], { type: 'image/jpeg' });
+			}
 
 			// Update metrics
 			this.metrics.framesReceived++;
 			this.metrics.bytesReceived += arrayBuffer.byteLength;
 
-			// Track latency
-			this.latencyHistory.push(frame.latencyMs);
-			if (this.latencyHistory.length > 100) {
-				this.latencyHistory.shift();
+			// Track latency (only for complex format)
+			if (latencyMs > 0) {
+				this.latencyHistory.push(latencyMs);
+				if (this.latencyHistory.length > 100) {
+					this.latencyHistory.shift();
+				}
 			}
 
 			// Track frame timestamps for FPS calculation
@@ -325,11 +387,8 @@ export class VideoStreamClient {
 
 			// Render to canvas if available
 			if (this.canvas && this.ctx) {
-				this.renderFrameToCanvas(frame.jpegData);
+				this.renderFrameToCanvas(jpegBlob);
 			}
-
-			// Notify callback
-			this.onFrameCallback?.(frame);
 		} catch (error) {
 			console.error('[VideoStream] Frame decode error:', error);
 			this.metrics.errors++;

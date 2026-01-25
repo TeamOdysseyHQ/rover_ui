@@ -15,7 +15,6 @@
 	import DrivingControls from '$lib/components/sections/DrivingControls.svelte';
 	import NavigationSection from '$lib/components/sections/NavigationSection.svelte';
 	import RoboticArm from '$lib/components/sections/RoboticArm.svelte';
-	import ScienceReports from '$lib/components/sections/ScienceReports.svelte';
 	
 	// Mission Panels
 	import ABExPanel from '$lib/components/panels/missions/ABExPanel.svelte';
@@ -27,10 +26,18 @@
 	import WaypointsModal from '$lib/components/modals/WaypointsModal.svelte';
 	import RouteAnalysisModal from '$lib/components/modals/RouteAnalysisModal.svelte';
 	
+	// Science Drawer & Button
+	import ScienceButton from '$lib/components/controls/ScienceButton.svelte';
+	import ScienceDrawer from '$lib/components/drawers/ScienceDrawer.svelte';
+	
 	// Modal visibility state
 	let showAutoModal = $state(false);
 	let showWaypointsModal = $state(false);
 	let showRouteAnalysisModal = $state(false);
+	
+	// Science drawer state
+	let showScienceDrawer = $state(false);
+	let microscopeActive = $state(false);
 	
 	// Mission state
 	let activeMission = $state('general');
@@ -91,7 +98,7 @@
 			<CameraPanel />
 		</section>
 		
-		<main class="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+		<main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 			<div class="space-y-6 xl:col-span-1">
 				<ConnectionPanel />
 				
@@ -118,18 +125,12 @@
 					onShowAutoModal={() => showAutoModal = true}
 				/>
 				<RoboticArm />
-            </div>
-
-            <div class="space-y-6">
 				<NavigationSection 
 					{waypoints}
 					onViewWaypoints={loadWaypoints}
 					onViewRouteAnalysis={loadRouteAnalysis}
 				/>
-				<ScienceReports />
             </div>
-
-
 		</main>
 	</div>
 </div>
@@ -151,6 +152,17 @@
 <RouteAnalysisModal 
 	bind:show={showRouteAnalysisModal}
 	{routeAnalysis}
+/>
+
+<!-- Science Drawer & Button -->
+<ScienceButton 
+	onclick={() => showScienceDrawer = true}
+	{microscopeActive}
+/>
+
+<ScienceDrawer 
+	bind:show={showScienceDrawer}
+	bind:microscopeActive={microscopeActive}
 />
 
 <style>

@@ -366,6 +366,89 @@ export async function getCameraWebSocketStatus(cameraIndex) {
 }
 
 // ============================================
+// MICROSCOPE ENDPOINTS (/api/sci/microscope/)
+// ============================================
+
+/**
+ * Start microscope device
+ */
+export async function startMicroscope(width = 640, height = 480, fps = 30) {
+    const formData = new FormData();
+    formData.append('width', width.toString());
+    formData.append('height', height.toString());
+    formData.append('fps', fps.toString());
+    
+    const url = `${API_BASE_URL}/api/sci/microscope/start`;
+    const response = await fetch(url, {
+        method: 'POST',
+        body: formData
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+}
+
+/**
+ * Stop microscope device
+ */
+export async function stopMicroscope() {
+    const url = `${API_BASE_URL}/api/sci/microscope/stop`;
+    const response = await fetch(url, {
+        method: 'POST'
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+}
+
+/**
+ * Get microscope status
+ */
+export async function getMicroscopeStatus() {
+    return apiRequest('/api/sci/microscope/status', { method: 'GET' });
+}
+
+/**
+ * Get microscope MJPEG stream URL
+ */
+export function getMicroscopeStreamUrl() {
+    return `${API_BASE_URL}/api/sci/microscope/stream`;
+}
+
+/**
+ * Capture microscope image with metadata
+ */
+export async function captureMicroscopeImage(metadata) {
+    const formData = new FormData();
+    formData.append('latitude', metadata.latitude);
+    formData.append('longitude', metadata.longitude);
+    formData.append('altitude', metadata.altitude);
+    formData.append('battery_level', metadata.battery_level);
+    formData.append('mission_id', metadata.mission_id);
+    formData.append('rover_id', metadata.rover_id);
+    formData.append('note', metadata.note || '');
+    formData.append('tags', 'microscope,science'); // Auto-tags
+    
+    const url = `${API_BASE_URL}/api/sci/microscope/capture`;
+    const response = await fetch(url, {
+        method: 'POST',
+        body: formData
+    });
+    
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+}
+
+// ============================================
 // ROS BRIDGE ENDPOINTS (/api/ros/ and /api/nav/ros/)
 // ============================================
 
