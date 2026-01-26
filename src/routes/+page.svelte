@@ -7,6 +7,7 @@
 	import CommandLog from '$lib/components/panels/CommandLog.svelte';
 	import RosStatusPanel from '$lib/components/panels/RosStatusPanel.svelte';
 	import TeensyTopicPanel from '$lib/components/panels/TeensyTopicPanel.svelte';
+	import ArmControlPanel from '$lib/components/panels/ArmControlPanel.svelte';
 	
 	// Sections
 	import DashboardHeader from '$lib/components/sections/DashboardHeader.svelte';
@@ -124,7 +125,7 @@
 					onEmergencyStop={showFeedbackMessage}
 					onShowAutoModal={() => showAutoModal = true}
 				/>
-				<RoboticArm />
+				<ArmControlPanel />
 				<NavigationSection 
 					{waypoints}
 					onViewWaypoints={loadWaypoints}

@@ -169,10 +169,8 @@
 			holonomicMode = false;
 		}
 		
-		// If a movement key is released, stop
-		if (key in moveBindings) {
-			stopMovement();
-		}
+		// Note: Movement keys do NOT stop on release - they set persistent state
+		// Only 'K' key or explicit stop command will halt movement
 	}
 	
 	function stopMovement() {

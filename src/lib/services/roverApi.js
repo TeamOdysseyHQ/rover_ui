@@ -210,6 +210,61 @@ export async function getArmEndpoints() {
     return apiRequest('/api/arm/available', { method: 'POST' });
 }
 
+/**
+ * Get arm telemetry data
+ */
+export async function getArmData() {
+    return apiRequest('/api/arm/data', { method: 'POST' });
+}
+
+/**
+ * Send arm command (1=drop, -1=stop)
+ */
+export async function sendArmCommand(command) {
+    return apiRequest('/api/arm/ros/command', {
+        method: 'POST',
+        body: JSON.stringify({ command })
+    });
+}
+
+/**
+ * Trigger drop payload sequence
+ */
+export async function dropPayload() {
+    return apiRequest('/api/arm/ros/drop', { method: 'POST' });
+}
+
+/**
+ * Emergency stop arm
+ */
+export async function stopArm() {
+    return apiRequest('/api/arm/ros/stop', { method: 'POST' });
+}
+
+/**
+ * Send target angles to arm
+ */
+export async function sendArmTarget(angles) {
+    return apiRequest('/api/arm/ros/target', {
+        method: 'POST',
+        body: JSON.stringify(angles)
+    });
+}
+
+/**
+ * Subscribe to arm telemetry
+ */
+export async function subscribeToArmTelemetry() {
+    return apiRequest('/api/arm/ros/telemetry/subscribe', { method: 'POST' });
+}
+
+/**
+ * Get latest arm telemetry
+ */
+export async function getArmTelemetry() {
+    return apiRequest('/api/arm/ros/telemetry', { method: 'GET' });
+}
+
 // ============================================
 // OTHER ENDPOINTS (/api/o/)
 // ============================================
