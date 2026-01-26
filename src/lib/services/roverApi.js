@@ -199,6 +199,126 @@ export async function getScienceEndpoints() {
     return apiRequest('/api/sci/available', { method: 'POST' });
 }
 
+/**
+ * Get science sensor data (NPK, pH, CO2, temp, humidity, etc.)
+ */
+export async function getScienceSensorData() {
+    return apiRequest('/api/sci/sensor_data', { method: 'POST' });
+}
+
+// ============================================
+// SCIENCE CONTROL ENDPOINTS (/api/sci/control/)
+// ============================================
+
+/**
+ * Toggle science exploration mode on/off
+ */
+export async function enableScienceMode(enable) {
+    return apiRequest('/api/sci/control/enable', {
+        method: 'POST',
+        body: JSON.stringify({ enable })
+    });
+}
+
+/**
+ * Send linear actuator command
+ * -1=down, 1=up, 0/4/8/16=microstep modes
+ */
+export async function sendLinearActuatorCmd(command) {
+    return apiRequest('/api/sci/control/linear_actuator', {
+        method: 'POST',
+        body: JSON.stringify({ command })
+    });
+}
+
+/**
+ * Send drill motor command
+ * -2=CW, -1=decrease speed, 0=stop, 1=increase speed, 2=CCW
+ */
+export async function sendDrillCmd(command) {
+    return apiRequest('/api/sci/control/drill', {
+        method: 'POST',
+        body: JSON.stringify({ command })
+    });
+}
+
+/**
+ * Send barrel motor command
+ * 1=rotate 60°, 0/4/8/16=microstep modes
+ */
+export async function sendBarrelCmd(command) {
+    return apiRequest('/api/sci/control/barrel', {
+        method: 'POST',
+        body: JSON.stringify({ command })
+    });
+}
+
+/**
+ * Toggle PH servo position
+ */
+export async function toggleServo(toggle) {
+    return apiRequest('/api/sci/control/servo', {
+        method: 'POST',
+        body: JSON.stringify({ toggle })
+    });
+}
+
+/**
+ * Send full science control command
+ */
+export async function sendScienceControl(controlData) {
+    return apiRequest('/api/sci/control/command', {
+        method: 'POST',
+        body: JSON.stringify(controlData)
+    });
+}
+
+/**
+ * Get science control status
+ */
+export async function getScienceControlStatus() {
+    return apiRequest('/api/sci/control/status', { method: 'GET' });
+}
+
+// ============================================
+// SCIENCE DRILL TELEMETRY ENDPOINTS (/api/sci/drill/)
+// ============================================
+
+/**
+ * Subscribe to drill telemetry data
+ */
+export async function subscribeToDrillData() {
+    return apiRequest('/api/sci/drill/subscribe', { method: 'POST' });
+}
+
+/**
+ * Get latest drill telemetry (distance, IMU, halted status)
+ */
+export async function getDrillData() {
+    return apiRequest('/api/sci/drill/data', { method: 'GET' });
+}
+
+/**
+ * Subscribe to science warnings/alerts
+ */
+export async function subscribeToScienceWarnings() {
+    return apiRequest('/api/sci/warnings/subscribe', { method: 'POST' });
+}
+
+/**
+ * Get latest science warning code
+ */
+export async function getScienceWarnings() {
+    return apiRequest('/api/sci/warnings', { method: 'GET' });
+}
+
+/**
+ * Get all warning code definitions
+ */
+export async function getScienceWarningCodes() {
+    return apiRequest('/api/sci/warnings/codes', { method: 'GET' });
+}
+
 // ============================================
 // ARM ENDPOINTS (/api/arm/)
 // ============================================

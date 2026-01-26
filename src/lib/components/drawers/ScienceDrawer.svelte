@@ -4,6 +4,8 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import MicroscopePanel from '$lib/components/panels/MicroscopePanel.svelte';
+	import ScienceControlPanel from '$lib/components/panels/ScienceControlPanel.svelte';
+	import ScienceSensorDisplay from '$lib/components/panels/ScienceSensorDisplay.svelte';
 	import { FileText, Download, Loader2 } from 'lucide-svelte';
 	import {
 		generateReport,
@@ -22,6 +24,9 @@
 		show?: boolean;
 		microscopeActive?: boolean;
 	} = $props();
+	
+	// Science module state
+	let scienceModeEnabled = $state(false);
 	
 	// Report state (moved from ScienceReports.svelte)
 	let inference = $state('');
@@ -146,7 +151,13 @@
 			<!-- Section 1: Microscope -->
 			<MicroscopePanel bind:microscopeActive={microscopeActive} />
 			
-			<!-- Section 2: Report Generator -->
+			<!-- Section 2: Science Module Control -->
+			<ScienceControlPanel bind:scienceModeEnabled={scienceModeEnabled} />
+			
+			<!-- Section 3: Science Sensor Data -->
+			<ScienceSensorDisplay autoRefresh={scienceModeEnabled} />
+			
+			<!-- Section 4: Report Generator -->
 			<Card.Root class="bg-card border-border">
 				<Card.Header class="border-b border-border">
 					<Card.Title>Inference Input</Card.Title>
