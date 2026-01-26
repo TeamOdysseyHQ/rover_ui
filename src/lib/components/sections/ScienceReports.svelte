@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FileText, Download, Loader2, Trash2, AlertCircle } from 'lucide-svelte';
+	import { FileText, Download, Loader2, Trash2, AlertCircle, PlayCircle, StopCircle, Camera } from 'lucide-svelte';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
@@ -14,6 +14,16 @@
 		type ReportResponse,
 		type ReportMetadata
 	} from '$lib/services/scienceReportService';
+	import { assignExpedition, checkExpeditionStatus } from '$lib/services/roverApi';
+	import {
+		expeditionStore,
+		currentExpeditionId,
+		isExpeditionActive,
+		expeditionImages,
+		expeditionImageCount,
+		expeditionStartTime,
+		generateImageCaptions
+	} from '$lib/stores/expeditionStore';
 
 	let inference = $state('');
 	let isGenerating = $state(false);
@@ -27,9 +37,74 @@
 	let deletingReports = $state<Set<string>>(new Set());
 	let confirmDelete = $state<string | null>(null);
 
+	// Expedition state (derived from store)
+	let expeditionId = $derived($currentExpeditionId);
+	let isActive = $derived($isExpeditionActive);
+	let images = $derived($expeditionImages);
+	let imageCount = $derived($expeditionImageCount);
+	let startTime = $derived($expeditionStartTime);
+	let isStartingExpedition = $state(false);
+
+	async function handleStartExpedition() {
+		isStartingExpedition = true;
+		setStatus('Starting new expedition...', 'info');
+
+		try {
+			const result = await assignExpedition();
+
+			if (result.success && result.expedition_id) {
+				expeditionStore.startExpedition(result.expedition_id);
+				setStatus(`Expedition started: ${result.expedition_id.slice(0, 8)}...`, 'success');
+			} else {
+				setStatus(`Failed to start expedition: ${result.message || 'Unknown error'}`, 'error');
+			}
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : 'Failed to start expedition';
+			setStatus(`Error: ${errorMsg}`, 'error');
+		} finally {
+			isStartingExpedition = false;
+		}
+	}
+
+	function handleEndExpedition() {
+		expeditionStore.endExpedition();
+		setStatus('Expedition ended', 'success');
+	}
+
+	function getElapsedTime() {
+		if (!startTime) return '00:00:00';
+
+		const now = new Date();
+		const elapsed = now.getTime() - startTime.getTime();
+		const hours = Math.floor(elapsed / 3600000);
+		const minutes = Math.floor((elapsed % 3600000) / 60000);
+		const seconds = Math.floor((elapsed % 60000) / 1000);
+
+		return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+	}
+
+	// Update elapsed time every second
+	let elapsedTime = $state('00:00:00');
+	$effect(() => {
+		if (isActive && startTime) {
+			const interval = setInterval(() => {
+				elapsedTime = getElapsedTime();
+			}, 1000);
+
+			return () => clearInterval(interval);
+		} else {
+			elapsedTime = '00:00:00';
+		}
+	});
+
 	async function handleGenerateReport() {
 		if (!inference.trim()) {
 			setStatus('Please enter inference data', 'error');
+			return;
+		}
+
+		if (!isActive || !expeditionId) {
+			setStatus('No active expedition. Please start an expedition first.', 'error');
 			return;
 		}
 
@@ -37,11 +112,58 @@
 		setStatus('Generating report...', 'info');
 
 		try {
-			const result = await generateReport(inference);
+			// Generate image captions for all captured images
+			const imageCaptions = generateImageCaptions(images);
+
+			const result = await generateReport(inference, expeditionId, imageCaptions, false);
 
 			if (result.success) {
 				lastGeneratedReport = result;
-				setStatus('Report generated successfully!', 'success');
+				setStatus(
+					`Report generated successfully with ${imageCount} image${imageCount !== 1 ? 's' : ''}!`,
+					'success'
+				);
+				inference = '';
+				await loadAvailableReports();
+			} else {
+				setStatus(`Failed: ${result.message}`, 'error');
+				lastGeneratedReport = null;
+			}
+		} catch (error) {
+			const errorMsg = error instanceof Error ? error.message : 'An unexpected error occurred';
+			setStatus(`Error: ${errorMsg}`, 'error');
+			lastGeneratedReport = null;
+		} finally {
+			isGenerating = false;
+		}
+	}
+
+	async function handleForceGenerateReport() {
+		if (!inference.trim()) {
+			setStatus('Please enter inference data', 'error');
+			return;
+		}
+
+		if (!isActive || !expeditionId) {
+			setStatus('No active expedition. Please start an expedition first.', 'error');
+			return;
+		}
+
+		isGenerating = true;
+		setStatus('Force generating report (ignoring cache)...', 'info');
+
+		try {
+			// Generate image captions for all captured images
+			const imageCaptions = generateImageCaptions(images);
+
+			const result = await generateReport(inference, expeditionId, imageCaptions, true);
+
+			if (result.success) {
+				lastGeneratedReport = result;
+				setStatus(
+					`Report force-generated successfully with ${imageCount} image${imageCount !== 1 ? 's' : ''}!`,
+					'success'
+				);
 				inference = '';
 				await loadAvailableReports();
 			} else {
@@ -196,17 +318,114 @@
 		});
 	}
 
+	function formatImageTimestamp(isoString: string): string {
+		const date = new Date(isoString);
+		return date.toLocaleTimeString('en-US', {
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
+
 	$effect(() => {
 		loadAvailableReports();
 	});
 </script>
 
 <div class="science-reports space-y-4">
+	<!-- Expedition Control Section -->
+	<Card.Root class="bg-card border-border">
+		<Card.Header class="border-b border-border">
+			<Card.Title>Expedition Control</Card.Title>
+		</Card.Header>
+		<Card.Content class="space-y-4 pt-4">
+			{#if isActive}
+				<div class="expedition-active">
+					<div class="expedition-header">
+						<div class="expedition-status">
+							<Badge variant="default" class="bg-green-500 hover:bg-green-600">Active</Badge>
+							<span class="expedition-label">Expedition ID:</span>
+							<span class="expedition-id">{expeditionId?.slice(0, 16)}...</span>
+						</div>
+					</div>
+					<div class="expedition-info">
+						<div class="info-item">
+							<span class="info-label">Duration:</span>
+							<span class="info-value">{elapsedTime}</span>
+						</div>
+						<div class="info-item">
+							<span class="info-label">Images Captured:</span>
+							<span class="info-value">{imageCount}</span>
+						</div>
+					</div>
+					<Button variant="destructive" class="w-full" onclick={handleEndExpedition}>
+						<StopCircle class="w-4 h-4 mr-2" />
+						End Expedition
+					</Button>
+				</div>
+			{:else}
+				<div class="expedition-inactive">
+					<p class="text-sm text-slate-400 mb-4">
+						No active expedition. Start a new expedition to begin capturing images for a report.
+					</p>
+					<Button
+						variant="default"
+						class="w-full"
+						onclick={handleStartExpedition}
+						disabled={isStartingExpedition}
+					>
+						{#if isStartingExpedition}
+							<Loader2 class="w-4 h-4 mr-2 animate-spin" />
+							Starting...
+						{:else}
+							<PlayCircle class="w-4 h-4 mr-2" />
+							Start New Expedition
+						{/if}
+					</Button>
+				</div>
+			{/if}
+		</Card.Content>
+	</Card.Root>
+
+	<!-- Image Gallery Section -->
+	{#if isActive && imageCount > 0}
+		<Card.Root class="bg-card border-border">
+			<Card.Header class="border-b border-border">
+				<Card.Title>Captured Images ({imageCount})</Card.Title>
+			</Card.Header>
+			<Card.Content class="pt-4">
+				<div class="image-gallery">
+					{#each images as image}
+						<div class="image-card">
+							<div class="image-placeholder">
+								<Camera class="w-8 h-8 text-slate-600" />
+							</div>
+							<div class="image-overlay">
+								<span class="camera-badge">{image.camera_name}</span>
+								<span class="time-badge">{formatImageTimestamp(image.timestamp)}</span>
+							</div>
+							<div class="image-footer">
+								<span class="image-filename">{image.filename.slice(0, 20)}...</span>
+							</div>
+						</div>
+					{/each}
+				</div>
+			</Card.Content>
+		</Card.Root>
+	{/if}
+
+	<!-- Report Generator Section -->
 	<Card.Root class="bg-card border-border">
 		<Card.Header class="border-b border-border">
 			<Card.Title>Science Report Generator</Card.Title>
 		</Card.Header>
 		<Card.Content class="space-y-4 pt-4">
+			{#if !isActive}
+				<div class="warning-message">
+					<AlertCircle class="w-4 h-4" />
+					<span>Please start an expedition to generate reports with captured images.</span>
+				</div>
+			{/if}
+
 			<div class="space-y-2">
 				<label for="inference" class="text-sm font-medium text-slate-300">
 					Inference Data
@@ -221,20 +440,41 @@
 				/>
 			</div>
 
-			<Button
-				variant="default"
-				class="w-full"
-				onclick={handleGenerateReport}
-				disabled={isGenerating || !inference.trim()}
-			>
-				{#if isGenerating}
-					<Loader2 class="w-4 h-4 mr-2 animate-spin" />
-					Generating...
-				{:else}
-					<FileText class="w-4 h-4 mr-2" />
-					Generate Report
-				{/if}
-			</Button>
+			<div class="space-y-2">
+				<Button
+					variant="default"
+					class="w-full"
+					onclick={handleGenerateReport}
+					disabled={isGenerating || !inference.trim() || !isActive}
+				>
+					{#if isGenerating}
+						<Loader2 class="w-4 h-4 mr-2 animate-spin" />
+						Generating...
+					{:else}
+						<FileText class="w-4 h-4 mr-2" />
+						Generate Report{imageCount > 0 ? ` (${imageCount} image${imageCount !== 1 ? 's' : ''})` : ''}
+					{/if}
+				</Button>
+
+				<Button
+					variant="outline"
+					class="w-full"
+					onclick={handleForceGenerateReport}
+					disabled={isGenerating || !inference.trim() || !isActive}
+				>
+					{#if isGenerating}
+						<Loader2 class="w-4 h-4 mr-2 animate-spin" />
+						Generating...
+					{:else}
+						<AlertCircle class="w-4 h-4 mr-2" />
+						Force Generate (Ignore Cache)
+					{/if}
+				</Button>
+
+				<p class="text-xs text-slate-500 text-center">
+					Use "Force Generate" to regenerate report even if cache exists
+				</p>
+			</div>
 
 			{#if statusMessage}
 				<div class="status-message {getStatusColor()}">
@@ -426,6 +666,144 @@
 		text-align: center;
 		font-size: 0.875rem;
 		font-weight: 500;
+	}
+
+	.warning-message {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.75rem;
+		background: rgba(245, 158, 11, 0.1);
+		border: 1px solid rgba(245, 158, 11, 0.3);
+		border-radius: 0.375rem;
+		color: var(--amber-400);
+		font-size: 0.875rem;
+	}
+
+	.expedition-active,
+	.expedition-inactive {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.expedition-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.expedition-status {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.expedition-label {
+		font-size: 0.875rem;
+		color: var(--slate-400);
+		font-weight: 600;
+	}
+
+	.expedition-id {
+		font-size: 0.875rem;
+		font-family: monospace;
+		color: var(--slate-300);
+	}
+
+	.expedition-info {
+		display: flex;
+		gap: 2rem;
+		padding: 0.75rem;
+		background: var(--slate-800);
+		border: 1px solid var(--slate-700);
+		border-radius: 0.375rem;
+	}
+
+	.info-item {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.info-label {
+		font-size: 0.75rem;
+		color: var(--slate-500);
+		font-weight: 600;
+	}
+
+	.info-value {
+		font-size: 1rem;
+		color: var(--slate-300);
+		font-family: monospace;
+	}
+
+	.image-gallery {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		gap: 0.75rem;
+		max-height: 300px;
+		overflow-y: auto;
+	}
+
+	.image-card {
+		position: relative;
+		background: var(--slate-800);
+		border: 1px solid var(--slate-700);
+		border-radius: 0.375rem;
+		overflow: hidden;
+		transition: all 0.15s;
+	}
+
+	.image-card:hover {
+		border-color: var(--sky-blue);
+		transform: translateY(-2px);
+	}
+
+	.image-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		height: 120px;
+		background: var(--slate-900);
+	}
+
+	.image-overlay {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		display: flex;
+		justify-content: space-between;
+		padding: 0.5rem;
+		background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent);
+	}
+
+	.camera-badge,
+	.time-badge {
+		font-size: 0.75rem;
+		padding: 0.25rem 0.5rem;
+		background: rgba(30, 41, 59, 0.9);
+		border-radius: 0.25rem;
+		color: var(--slate-300);
+		font-weight: 600;
+	}
+
+	.image-footer {
+		padding: 0.5rem;
+		background: var(--slate-800);
+		border-top: 1px solid var(--slate-700);
+	}
+
+	.image-filename {
+		font-size: 0.75rem;
+		color: var(--slate-400);
+		font-family: monospace;
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.report-info {

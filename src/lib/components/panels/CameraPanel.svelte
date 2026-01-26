@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Camera, Power, PowerOff, Image as ImageIcon, RefreshCw, AlertCircle, Wifi, WifiOff, Activity } from 'lucide-svelte';
 	import { apiStatus } from '$lib/stores/apiStore';
+	import { expeditionStore, currentExpeditionId, isExpeditionActive } from '$lib/stores/expeditionStore';
 	import * as roverApi from '$lib/services/roverApi';
 	import { VideoStreamClient, type StreamMetrics } from '$lib/services/videoStreamService';
 	import * as Card from '$lib/components/ui/card';
@@ -269,8 +270,24 @@
 	
 	// Capture image from camera
 	async function captureImage(cameraName: string) {
+		// Check if expedition is active
+		if (!$isExpeditionActive) {
+			showFeedbackMsg('No active expedition. Please start an expedition in the Science Reports section first.', 'error');
+			return;
+		}
+
 		try {
-			const result = await roverApi.captureCameraImage(cameraName, telemetry);
+			const result = await roverApi.captureCameraImage(cameraName, telemetry, $currentExpeditionId);
+			
+			// Add to expedition store
+			expeditionStore.addCapturedImage({
+				filename: result.saved,
+				camera_name: cameraName,
+				timestamp: new Date().toISOString(),
+				expedition_id: $currentExpeditionId || '',
+				file_size_mb: result.file_size_mb
+			});
+			
 			showFeedbackMsg(`Image captured: ${result.saved} (${result.file_size_mb} MB)`, 'success');
 		} catch (err: any) {
 			showFeedbackMsg(`Failed to capture image: ${err.message}`, 'error');

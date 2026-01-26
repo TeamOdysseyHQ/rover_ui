@@ -3,7 +3,7 @@ import * as roverApi from '$lib/services/roverApi';
 
 // API connection status
 export const apiStatus = writable('disconnected'); // 'connected' | 'disconnected' | 'connecting' | 'error'
-export const roverApiUrl = writable('http://localhost:6767');
+export const roverApiUrl = writable('http://10.202.197.189:6767');
 
 // Command history for logging
 export const commandHistory = writable([]);
@@ -37,7 +37,7 @@ export async function autoConnect() {
 	if (autoConnectAttempted) return;
 	autoConnectAttempted = true;
 	
-	const defaultUrl = 'http://localhost:6767';
+	const defaultUrl = 'http://10.202.197.189:6767';
 	console.log('[API] Attempting auto-connect to', defaultUrl);
 	
 	try {

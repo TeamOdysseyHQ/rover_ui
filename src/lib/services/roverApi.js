@@ -4,7 +4,7 @@
  */
 
 // Default API base URL - can be configured
-let API_BASE_URL = 'http://localhost:6767';
+let API_BASE_URL = 'http://10.202.197.189:6767';
 
 export function setApiBaseUrl(url) {
     API_BASE_URL = url.replace(/\/$/, ''); // Remove trailing slash
@@ -204,6 +204,27 @@ export async function getScienceEndpoints() {
  */
 export async function getScienceSensorData() {
     return apiRequest('/api/sci/sensor_data', { method: 'POST' });
+}
+
+/**
+ * Assign a new expedition ID
+ */
+export async function assignExpedition() {
+    return apiRequest('/api/sci/assign_expedition', { method: 'POST' });
+}
+
+/**
+ * Check expedition status (processed, unprocessed, or not_found)
+ */
+export async function checkExpeditionStatus(expeditionId) {
+    return apiRequest(`/api/sci/expedition_check/${expeditionId}`, { method: 'GET' });
+}
+
+/**
+ * List all expeditions (processed and unprocessed)
+ */
+export async function listExpeditions() {
+    return apiRequest('/api/sci/expeditions_list', { method: 'POST' });
 }
 
 // ============================================
@@ -505,8 +526,13 @@ export async function getCameraStatus(cameraName) {
 /**
  * Capture image from a specific camera
  */
-export async function captureCameraImage(cameraName, telemetry = {}) {
+export async function captureCameraImage(cameraName, telemetry = {}, expeditionId = null) {
     const formData = new FormData();
+    
+    // Add expedition_id if provided (REQUIRED by backend)
+    if (expeditionId) {
+        formData.append('expedition_id', expeditionId);
+    }
     
     // Add telemetry data
     Object.entries(telemetry).forEach(([key, value]) => {
@@ -615,8 +641,14 @@ export function getMicroscopeStreamUrl() {
 /**
  * Capture microscope image with metadata
  */
-export async function captureMicroscopeImage(metadata) {
+export async function captureMicroscopeImage(metadata, expeditionId = null) {
     const formData = new FormData();
+    
+    // Add expedition_id if provided
+    if (expeditionId) {
+        formData.append('expedition_id', expeditionId);
+    }
+    
     formData.append('latitude', metadata.latitude);
     formData.append('longitude', metadata.longitude);
     formData.append('altitude', metadata.altitude);

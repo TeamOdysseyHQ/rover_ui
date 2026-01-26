@@ -4,7 +4,7 @@
  * Handles API calls for generating and downloading science reports with inference data.
  */
 
-const API_BASE = 'http://localhost:6767';
+const API_BASE = 'http://10.202.197.189:6767';
 
 export interface ReportResponse {
 	success: boolean;
@@ -42,14 +42,36 @@ export interface ReportMetadataResponse {
 /**
  * Generate a new science report with inference data
  */
-export async function generateReport(inference: string): Promise<ReportResponse> {
+export async function generateReport(
+	inference: string,
+	expeditionId?: string,
+	imageCaptions?: Record<string, string>,
+	forceGenerate?: boolean
+): Promise<ReportResponse> {
 	try {
+		const body: any = { inference };
+		
+		// Add optional expedition_id if provided
+		if (expeditionId) {
+			body.expedition_id = expeditionId;
+		}
+		
+		// Add optional image_captions if provided
+		if (imageCaptions && Object.keys(imageCaptions).length > 0) {
+			body.image_captions = imageCaptions;
+		}
+		
+		// Add optional force_generate flag if provided
+		if (forceGenerate !== undefined) {
+			body.force_generate = forceGenerate;
+		}
+		
 		const response = await fetch(`${API_BASE}/api/sci/reports`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
 			},
-			body: JSON.stringify({ inference })
+			body: JSON.stringify(body)
 		});
 
 		if (!response.ok) {
