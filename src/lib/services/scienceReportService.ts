@@ -4,7 +4,7 @@
  * Handles API calls for generating and downloading science reports with inference data.
  */
 
-const API_BASE = 'http://10.202.197.189:6767';
+const API_BASE = 'http://10.103.111.189:6767';
 
 export interface ReportResponse {
 	success: boolean;

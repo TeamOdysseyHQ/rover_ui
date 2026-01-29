@@ -4,7 +4,7 @@
  */
 
 // Default API base URL - can be configured
-let API_BASE_URL = 'http://10.202.197.189:6767';
+let API_BASE_URL = 'http://10.103.111.189:6767';
 
 export function setApiBaseUrl(url) {
     API_BASE_URL = url.replace(/\/$/, ''); // Remove trailing slash

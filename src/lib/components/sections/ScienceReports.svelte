@@ -71,6 +71,8 @@
 		setStatus('Expedition ended', 'success');
 	}
 
+ $effect(() => { if (statusMessage) console.log(statusMessage) })
+
 	function getElapsedTime() {
 		if (!startTime) return '00:00:00';
 
