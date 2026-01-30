@@ -805,3 +805,62 @@ export async function getAllEndpoints() {
         };
     }
 }
+
+// ============================================
+// ARDUINO NAVIGATION ENDPOINTS (/api/nav/arduino/)
+// ============================================
+
+/**
+ * Connect to Arduino
+ */
+export async function connectArduino() {
+    return apiRequest('/api/nav/arduino/connect', { method: 'POST' });
+}
+
+/**
+ * Disconnect from Arduino
+ */
+export async function disconnectArduino() {
+    return apiRequest('/api/nav/arduino/disconnect', { method: 'POST' });
+}
+
+/**
+ * Get Arduino connection status
+ */
+export async function getArduinoStatus() {
+    return apiRequest('/api/nav/arduino/status', { method: 'GET' });
+}
+
+/**
+ * Send raw command to Arduino (W, S, A, D, X)
+ */
+export async function sendArduinoCommand(command) {
+    return apiRequest('/api/nav/arduino/cmd', {
+        method: 'POST',
+        body: JSON.stringify({ command })
+    });
+}
+
+/**
+ * Send direction to Arduino (forward, backward, left, right, stop)
+ */
+export async function sendArduinoDirection(direction) {
+    return apiRequest('/api/nav/arduino/direction', {
+        method: 'POST',
+        body: JSON.stringify({ direction })
+    });
+}
+
+/**
+ * Send stop command to Arduino
+ */
+export async function stopArduino() {
+    return apiRequest('/api/nav/arduino/stop', { method: 'POST' });
+}
+
+/**
+ * Reconnect to Arduino
+ */
+export async function reconnectArduino() {
+    return apiRequest('/api/nav/arduino/reconnect', { method: 'POST' });
+}

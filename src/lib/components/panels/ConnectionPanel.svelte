@@ -6,7 +6,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	
-	let apiUrl = $state('http://10.202.197.189:6767'); // Default API URL
+	let apiUrl = $state('http://192.168.1.3:6767'); // Default API URL
 	
 	let isConnected = $derived($apiStatus === 'connected');
 	let hasError = $derived($apiStatus === 'error');

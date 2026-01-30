@@ -1,14 +1,41 @@
 <script lang="ts">
-	import { Bot, ArrowUp, ArrowDown, RotateCcw, RotateCw, Move, Square } from 'lucide-svelte';
+	import { Bot, ArrowUp, ArrowDown, RotateCcw, RotateCw, Move, Square, Cpu, Wifi } from 'lucide-svelte';
 	import { isRosConnected, publishCmdVel, stopRover } from '$lib/stores/rosStore';
 	import { logCommand } from '$lib/stores/apiStore';
 	import { Button } from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
 	import { Badge } from '$lib/components/ui/badge';
 	import { onMount, onDestroy } from 'svelte';
+	import { 
+		connectArduino, 
+		disconnectArduino, 
+		getArduinoStatus, 
+		sendArduinoCommand, 
+		stopArduino 
+	} from '$lib/services/roverApi';
 	
 	// Props using $props rune
 	let { onEmergencyStop = () => {}, onShowAutoModal = () => {} } = $props();
+	
+	// Control mode: 'ros' or 'arduino'
+	let controlMode = $state<'ros' | 'arduino'>('ros');
+	
+	// Arduino connection state
+	let arduinoConnected = $state(false);
+	let arduinoCheckInterval: ReturnType<typeof setInterval> | null = null;
+	
+	// WASD Arduino key mapping
+	const wasdToArduino: Record<string, string> = {
+		'w': 'W',  // Forward
+		'W': 'W',
+		's': 'S',  // Backward
+		'S': 'S',
+		'a': 'A',  // Left
+		'A': 'A',
+		'd': 'D',  // Right
+		'D': 'D',
+		' ': 'X',  // Stop (spacebar)
+	};
 	
 	// Twist keyboard control state
 	let linearSpeed = $state(0.5);  // Current linear speed (m/s)
@@ -98,6 +125,77 @@
 		logCommand({ type: 'KEYBOARD_TWIST', data: twist }, 'sent');
 	}
 	
+	// Arduino mode: Check connection status periodically
+	async function checkArduinoConnection() {
+		try {
+			const status = await getArduinoStatus();
+			arduinoConnected = status.connected || false;
+		} catch (error) {
+			arduinoConnected = false;
+		}
+	}
+	
+	// Arduino mode: Send WASD command
+	async function sendArduinoWASD(key: string) {
+		if (!arduinoConnected) return;
+		
+		const command = wasdToArduino[key];
+		if (!command) return;
+		
+		try {
+			await sendArduinoCommand(command);
+			logCommand({ type: 'ARDUINO_CMD', data: { command } }, 'sent');
+			
+			// Update movement description
+			const descriptions: Record<string, string> = {
+				'W': 'Forward',
+				'S': 'Backward',
+				'A': 'Left',
+				'D': 'Right',
+				'X': 'Stop'
+			};
+			movementDesc = descriptions[command] || 'Moving';
+			activeKey = key;
+		} catch (error: any) {
+			console.error('Arduino command failed:', error);
+			logCommand({ type: 'ARDUINO_CMD', data: { command } }, 'error', error.message);
+		}
+	}
+	
+	// Toggle control mode
+	async function toggleControlMode() {
+		const newMode = controlMode === 'ros' ? 'arduino' : 'ros';
+		
+		if (newMode === 'arduino') {
+			// Connect to Arduino
+			try {
+				await connectArduino();
+				await checkArduinoConnection();
+				if (arduinoConnected) {
+					controlMode = 'arduino';
+					stopMovement(); // Stop ROS movements
+					logCommand({ type: 'MODE_SWITCH', data: { mode: 'arduino' } }, 'sent');
+				} else {
+					throw new Error('Arduino not connected');
+				}
+			} catch (error: any) {
+				onEmergencyStop(`Failed to connect to Arduino: ${error.message}`, 'error');
+			}
+		} else {
+			// Switch back to ROS
+			try {
+				await disconnectArduino();
+				controlMode = 'ros';
+				arduinoConnected = false;
+				movementDesc = 'Stopped';
+				activeKey = '';
+				logCommand({ type: 'MODE_SWITCH', data: { mode: 'ros' } }, 'sent');
+			} catch (error: any) {
+				onEmergencyStop(`Failed to disconnect Arduino: ${error.message}`, 'error');
+			}
+		}
+	}
+	
 	function handleKeyDown(e: KeyboardEvent) {
 		// Ignore if typing in an input
 		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -106,6 +204,23 @@
 		
 		const key = e.key;
 		
+		// Arduino mode: WASD controls
+		if (controlMode === 'arduino') {
+			if (key in wasdToArduino) {
+				e.preventDefault();
+				sendArduinoWASD(key);
+				return;
+			}
+			// Stop key (k or K) also works in Arduino mode
+			if (key === 'k' || key === 'K') {
+				e.preventDefault();
+				sendArduinoWASD(' '); // Send stop command
+				return;
+			}
+			return; // Ignore other keys in Arduino mode
+		}
+		
+		// ROS mode: Original teleop_twist_keyboard controls
 		// Track holonomic mode
 		if (e.shiftKey) {
 			holonomicMode = true;
@@ -193,18 +308,27 @@
 		}
 	}
 	
-	// Emergency stop via ROS
+	// Emergency stop via ROS or Arduino
 	async function handleEmergencyStop() {
 		try {
 			logCommand({ type: 'EMERGENCY_STOP' }, 'sent');
-			stopMovement();
-			const success = await stopRover();
-			if (success) {
-				logCommand({ type: 'EMERGENCY_STOP' }, 'success');
-				onEmergencyStop('Emergency stop activated!', 'success');
+			
+			if (controlMode === 'arduino') {
+				// Arduino mode: send stop command
+				await stopArduino();
+				movementDesc = 'Stopped';
+				activeKey = '';
 			} else {
-				throw new Error('Failed to stop rover');
+				// ROS mode: use ROS stop
+				stopMovement();
+				const success = await stopRover();
+				if (!success) {
+					throw new Error('Failed to stop rover');
+				}
 			}
+			
+			logCommand({ type: 'EMERGENCY_STOP' }, 'success');
+			onEmergencyStop('Emergency stop activated!', 'success');
 		} catch (error: any) {
 			logCommand({ type: 'EMERGENCY_STOP' }, 'error', error.message);
 			onEmergencyStop(`Emergency stop failed: ${error.message}`, 'error');
@@ -214,6 +338,13 @@
 	onMount(() => {
 		window.addEventListener('keydown', handleKeyDown);
 		window.addEventListener('keyup', handleKeyUp);
+		
+		// Check Arduino status periodically when in Arduino mode
+		arduinoCheckInterval = setInterval(() => {
+			if (controlMode === 'arduino') {
+				checkArduinoConnection();
+			}
+		}, 5000);
 	});
 	
 	onDestroy(() => {
@@ -221,6 +352,14 @@
 		window.removeEventListener('keyup', handleKeyUp);
 		if (publishIntervalId) {
 			clearInterval(publishIntervalId);
+		}
+		if (arduinoCheckInterval) {
+			clearInterval(arduinoCheckInterval);
+		}
+		
+		// Disconnect Arduino on unmount if connected
+		if (controlMode === 'arduino' && arduinoConnected) {
+			disconnectArduino().catch(console.error);
 		}
 	});
 </script>
@@ -230,11 +369,34 @@
 		<div class="flex justify-between items-center">
 			<Card.Title>Driving Controls</Card.Title>
 			<div class="flex items-center gap-2">
-				{#if $isRosConnected}
-					<Badge variant="success" class="text-xs">ROS Connected</Badge>
+				<!-- Mode Toggle Button -->
+				<Button 
+					variant={controlMode === 'arduino' ? 'default' : 'outline'} 
+					size="sm" 
+					onclick={toggleControlMode}
+				>
+					{#if controlMode === 'arduino'}
+						<Cpu class="w-4 h-4 mr-1" />Arduino
+					{:else}
+						<Wifi class="w-4 h-4 mr-1" />ROS
+					{/if}
+				</Button>
+				
+				<!-- Connection Status -->
+				{#if controlMode === 'ros'}
+					{#if $isRosConnected}
+						<Badge variant="success" class="text-xs">ROS Connected</Badge>
+					{:else}
+						<Badge variant="warning" class="text-xs">ROS Disconnected</Badge>
+					{/if}
 				{:else}
-					<Badge variant="warning" class="text-xs">ROS Disconnected</Badge>
+					{#if arduinoConnected}
+						<Badge variant="success" class="text-xs">Arduino Connected</Badge>
+					{:else}
+						<Badge variant="warning" class="text-xs">Arduino Disconnected</Badge>
+					{/if}
 				{/if}
+				
 				<Button variant="default" size="sm" onclick={onShowAutoModal}>
 					<Bot class="w-4 h-4 mr-1" />Auto
 				</Button>
@@ -246,16 +408,71 @@
 		<!-- Status Display -->
 		<div class="status-bar">
 			<div class="status-item">
+				<span class="status-label">Mode</span>
+				<span class="status-value mode-value">
+					{controlMode === 'arduino' ? 'Arduino (WASD)' : 'ROS (UIJKLM,.)'}
+				</span>
+			</div>
+			<div class="status-item">
 				<span class="status-label">Status</span>
 				<span class="status-value" class:active={activeKey !== ''}>{movementDesc}</span>
 			</div>
+			{#if controlMode === 'ros'}
 			<div class="status-item">
-				<span class="status-label">Mode</span>
-				<span class="status-value">{holonomicMode ? 'Holonomic' : 'Normal'}</span>
+				<span class="status-label">Holonomic</span>
+				<span class="status-value">{holonomicMode ? 'Active' : 'Normal'}</span>
 			</div>
+			{/if}
 		</div>
 		
-		<!-- Main Keyboard Layout -->
+		<!-- Arduino Mode: WASD Controls -->
+		{#if controlMode === 'arduino'}
+		<div class="keyboard-layout">
+			<div class="keyboard-section">
+				<div class="section-header">
+					<Cpu class="w-3 h-3" />
+					<span>Arduino WASD Controls</span>
+				</div>
+				
+				<div class="key-grid wasd-grid">
+					<!-- Row 1: W -->
+					<div></div>
+					<button class="key" class:active={activeKey === 'w' || activeKey === 'W'} title="Forward">
+						<span class="key-label">W</span>
+						<span class="key-icon">&#8593;</span>
+					</button>
+					<div></div>
+					
+					<!-- Row 2: A S D -->
+					<button class="key" class:active={activeKey === 'a' || activeKey === 'A'} title="Left">
+						<span class="key-label">A</span>
+						<span class="key-icon">&#8592;</span>
+					</button>
+					<button class="key" class:active={activeKey === 's' || activeKey === 'S'} title="Backward">
+						<span class="key-label">S</span>
+						<span class="key-icon">&#8595;</span>
+					</button>
+					<button class="key" class:active={activeKey === 'd' || activeKey === 'D'} title="Right">
+						<span class="key-label">D</span>
+						<span class="key-icon">&#8594;</span>
+					</button>
+					
+					<!-- Row 3: Spacebar -->
+					<div></div>
+					<button class="key stop-key wide-key" class:active={activeKey === ' ' || activeKey === 'k'} title="Stop">
+						<span class="key-label">SPACE / K</span>
+						<span class="key-icon"><Square class="w-3 h-3" /></span>
+					</button>
+					<div></div>
+				</div>
+				
+				<div class="mode-hint">
+					<span class="hint-text">Use WASD keys to control rover via Arduino</span>
+				</div>
+			</div>
+		</div>
+		{:else}
+		<!-- ROS Mode: Original teleop_twist_keyboard Layout -->
 		<div class="keyboard-layout">
 			<!-- Movement Keys Section -->
 			<div class="keyboard-section">
@@ -363,7 +580,7 @@
 			</div>
 		</div>
 		
-		<!-- Speed Display -->
+		<!-- Speed Display (ROS mode only) -->
 		<div class="speed-display">
 			<div class="speed-bar">
 				<div class="speed-info">
@@ -392,6 +609,7 @@
 				</div>
 			</div>
 		</div>
+		{/if}
 		
 		<!-- Emergency Stop -->
 		<button class="emergency-stop" onclick={handleEmergencyStop}>
@@ -433,11 +651,26 @@
 		color: var(--sky-light);
 	}
 	
+	.status-value.mode-value {
+		color: var(--sky-blue);
+		font-weight: 600;
+	}
+	
 	.keyboard-layout {
 		display: grid;
 		grid-template-columns: 1fr auto;
 		gap: 1.5rem;
 		margin-bottom: 1rem;
+	}
+	
+	.wasd-grid {
+		grid-template-columns: repeat(3, 1fr);
+		max-width: 240px;
+		margin: 0 auto;
+	}
+	
+	.wide-key {
+		grid-column: span 1;
 	}
 	
 	.keyboard-section {
