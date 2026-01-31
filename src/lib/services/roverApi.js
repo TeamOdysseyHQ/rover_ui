@@ -227,6 +227,27 @@ export async function listExpeditions() {
     return apiRequest('/api/sci/expeditions_list', { method: 'POST' });
 }
 
+/**
+ * Assign a new navigation expedition ID
+ */
+export async function assignNavigationExpedition() {
+    return apiRequest('/api/nav/assign_expedition', { method: 'POST' });
+}
+
+/**
+ * Check navigation expedition status (processed, unprocessed, or not_found)
+ */
+export async function checkNavigationExpeditionStatus(expeditionId) {
+    return apiRequest(`/api/nav/expedition_check/${expeditionId}`, { method: 'GET' });
+}
+
+/**
+ * List all navigation expeditions (processed and unprocessed)
+ */
+export async function listNavigationExpeditions() {
+    return apiRequest('/api/nav/expeditions_list', { method: 'POST' });
+}
+
 // ============================================
 // SCIENCE CONTROL ENDPOINTS (/api/sci/control/)
 // ============================================
@@ -755,6 +776,46 @@ export async function publishRosMessage(topic, messageType, message) {
     return apiRequest('/api/nav/ros/publish', {
         method: 'POST',
         body: JSON.stringify({ topic, message_type: messageType, message })
+    });
+}
+
+// ============================================
+// ROS CAMERA ENDPOINTS (/api/nav/ros/camera/)
+// ============================================
+
+/**
+ * Subscribe to ROS camera image topic
+ */
+export async function subscribeToRosCamera(topicName = '/camera/camera/color/image_raw') {
+    return apiRequest('/api/nav/ros/camera/subscribe', {
+        method: 'POST',
+        body: JSON.stringify({ topic_name: topicName })
+    });
+}
+
+/**
+ * Get latest ROS camera image data
+ */
+export async function getLatestRosCameraImage(topicName = null) {
+    const params = topicName ? `?topic_name=${topicName}` : '';
+    return apiRequest(`/api/nav/ros/camera/latest${params}`, { method: 'GET' });
+}
+
+/**
+ * Get ROS camera MJPEG stream URL
+ */
+export function getRosCameraStreamUrl(topicName = null) {
+    const params = topicName ? `?topic_name=${topicName}` : '';
+    return `${API_BASE_URL}/api/nav/ros/camera/stream${params}`;
+}
+
+/**
+ * Unsubscribe from ROS camera topic
+ */
+export async function unsubscribeFromRosCamera(topicName = '/camera/camera/color/image_raw') {
+    return apiRequest('/api/nav/ros/camera/unsubscribe', {
+        method: 'POST',
+        body: JSON.stringify({ topic_name: topicName })
     });
 }
 

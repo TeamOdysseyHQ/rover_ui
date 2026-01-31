@@ -95,6 +95,14 @@ export const expeditionStore = {
 
 	/**
 	 * Add a captured image to the current expedition
+	 * @param {Object} imageData - Image data object
+	 * @param {string} imageData.filename - Image filename
+	 * @param {string} imageData.camera_name - Camera that captured the image
+	 * @param {string} imageData.timestamp - ISO timestamp
+	 * @param {string} imageData.expedition_id - Expedition ID
+	 * @param {number} imageData.file_size_mb - File size in MB
+	 * @param {string} [imageData.note] - Optional note explaining why this was captured
+	 * @param {Object} [imageData.gps_coords] - Optional GPS coordinates
 	 */
 	addCapturedImage: (imageData) => {
 		update((state) => {
@@ -106,6 +114,26 @@ export const expeditionStore = {
 			const newState = {
 				...state,
 				capturedImages: [...state.capturedImages, imageData]
+			};
+			saveToStorage(newState);
+			return newState;
+		});
+	},
+
+	/**
+	 * Update the note for a specific captured image
+	 * @param {string} filename - Image filename to update
+	 * @param {string} note - New note text
+	 */
+	updateImageNote: (filename, note) => {
+		update((state) => {
+			const newImages = state.capturedImages.map((img) =>
+				img.filename === filename ? { ...img, note } : img
+			);
+
+			const newState = {
+				...state,
+				capturedImages: newImages
 			};
 			saveToStorage(newState);
 			return newState;
@@ -192,4 +220,19 @@ export function generateImageCaptions(images) {
 	}
 
 	return captions;
+}
+
+/**
+ * Generate object_notes object for navigation reconnaissance reports
+ * Uses the user-provided notes instead of auto-generated captions
+ */
+export function generateObjectNotes(images) {
+	const notes = {};
+
+	for (const image of images) {
+		// Use the note field if available, otherwise use auto-caption
+		notes[image.filename] = image.note || generateAutoCaption(image);
+	}
+
+	return notes;
 }

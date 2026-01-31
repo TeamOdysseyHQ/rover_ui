@@ -2,6 +2,7 @@
 	import * as roverApi from '$lib/services/roverApi';
 	
 	// Panels
+    import ROSCameraPanel from '$lib/components/panels/RosCameraPanel.svelte';
 	import CameraPanel from '$lib/components/panels/CameraPanel.svelte';
 	import ConnectionPanel from '$lib/components/panels/ConnectionPanel.svelte';
 	import CommandLog from '$lib/components/panels/CommandLog.svelte';
@@ -88,8 +89,8 @@
 		<!-- Feedback Message -->
 		<FeedbackMessage bind:this={feedbackComponent} bind:show={showFeedback} />
 		
-		<!-- Header -->
 		<DashboardHeader {activeMission} />
+        <ROSCameraPanel />
 		
 		<!-- Mission Tabs -->
 		<MissionTabs {activeMission} onMissionChange={(mission) => activeMission = mission} />
@@ -125,12 +126,12 @@
 					onEmergencyStop={showFeedbackMessage}
 					onShowAutoModal={() => showAutoModal = true}
 				/>
-				<ArmControlPanel />
-				<NavigationSection 
-					{waypoints}
-					onViewWaypoints={loadWaypoints}
-					onViewRouteAnalysis={loadRouteAnalysis}
-				/>
+				    <!-- <ArmControlPanel /> -->
+				    <!-- <NavigationSection 
+					     {waypoints}
+					     onViewWaypoints={loadWaypoints}
+					     onViewRouteAnalysis={loadRouteAnalysis}
+				         /> -->
             </div>
 		</main>
 	</div>

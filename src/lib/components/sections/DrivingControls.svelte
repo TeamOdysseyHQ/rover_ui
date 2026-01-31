@@ -24,105 +24,102 @@
 	let arduinoConnected = $state(false);
 	let arduinoCheckInterval: ReturnType<typeof setInterval> | null = null;
 	
-	// WASD Arduino key mapping
-	const wasdToArduino: Record<string, string> = {
-		'w': 'W',  // Forward
-		'W': 'W',
-		's': 'S',  // Backward
-		'S': 'S',
-		'a': 'A',  // Left
-		'A': 'A',
-		'd': 'D',  // Right
-		'D': 'D',
-		' ': 'X',  // Stop (spacebar)
+	// Arduino speed control (0-255)
+	let arduinoSpeed = $state(0);  // Current speed
+	const maxArduinoSpeed = 255;
+	const arduinoSpeedStep = 5;
+	let arduinoSpeedInterval: ReturnType<typeof setInterval> | null = null;
+	let activeArduinoKey = $state('');  // Track which key is held
+	
+	// Arduino key mapping for speed control
+	const arduinoSpeedKeys: Record<string, string> = {
+		'w': 'w',  // Forward (lowercase)
+		's': 's',  // Backward (lowercase)
+		'a': 'a',  // Left (lowercase)
+		'd': 'd',  // Right (lowercase)
 	};
 	
-	// Twist keyboard control state
-	let linearSpeed = $state(0.5);  // Current linear speed (m/s)
-	let angularSpeed = $state(1.0); // Current angular speed (rad/s)
-	let maxLinearSpeed = $state(1.0);
-	let maxAngularSpeed = $state(2.0);
+	// Arduino camera control (ijkl - lowercase)
+	const arduinoCameraKeys: Record<string, string> = {
+		'i': 'i',  // Camera up
+		'j': 'j',  // Camera left
+		'k': 'k',  // Camera center/stop
+		'l': 'l',  // Camera right
+	};
 	
-	// Current velocity state
-	let currentLinearX = $state(0);
-	let currentLinearY = $state(0);
-	let currentLinearZ = $state(0);
-	let currentAngularZ = $state(0);
+	// ROS Mode: Discrete step velocity control (-1.0 to 1.0 in steps of 0.05)
+	let linearVelocity = $state(0.0);   // Current discrete linear velocity
+	let angularVelocity = $state(0.0);  // Current discrete angular velocity
+	const velocityStep = 0.05;          // Step size for velocity increments
+	const minVelocity = -1.0;           // Minimum velocity
+	const maxVelocity = 1.0;            // Maximum velocity
 	
-	// Holonomic mode (shift key held)
-	let holonomicMode = $state(false);
-	
-	// Active key display
-	let activeKey = $state('');
+	// Key hold state for WASD
+	let activeRosKeys = $state(new Set());
+	let rosKeyIntervals = new Map(); // Track intervals for each key
 	
 	// Movement description
 	let movementDesc = $state('Stopped');
 	
-	// Key bindings for teleop_twist_keyboard
-	const moveBindings: Record<string, { x: number; y: number; z: number; th: number; desc: string }> = {
-		// Normal mode keys
-		'i': { x: 1, y: 0, z: 0, th: 0, desc: 'Forward' },
-		'o': { x: 1, y: 0, z: 0, th: -1, desc: 'Forward + Turn Right' },
-		'j': { x: 0, y: 0, z: 0, th: 1, desc: 'Turn Left' },
-		'l': { x: 0, y: 0, z: 0, th: -1, desc: 'Turn Right' },
-		'u': { x: 1, y: 0, z: 0, th: 1, desc: 'Forward + Turn Left' },
-		',': { x: -1, y: 0, z: 0, th: 0, desc: 'Backward' },
-		'.': { x: -1, y: 0, z: 0, th: 1, desc: 'Backward + Turn Left' },
-		'm': { x: -1, y: 0, z: 0, th: -1, desc: 'Backward + Turn Right' },
-		// Holonomic mode keys (uppercase/shifted)
-		'I': { x: 1, y: 0, z: 0, th: 0, desc: 'Forward' },
-		'O': { x: 1, y: -1, z: 0, th: 0, desc: 'Forward + Strafe Right' },
-		'J': { x: 0, y: 1, z: 0, th: 0, desc: 'Strafe Left' },
-		'L': { x: 0, y: -1, z: 0, th: 0, desc: 'Strafe Right' },
-		'U': { x: 1, y: 1, z: 0, th: 0, desc: 'Forward + Strafe Left' },
-		'<': { x: -1, y: 0, z: 0, th: 0, desc: 'Backward' },
-		'>': { x: -1, y: -1, z: 0, th: 0, desc: 'Backward + Strafe Right' },
-		'M': { x: -1, y: 1, z: 0, th: 0, desc: 'Backward + Strafe Left' },
-		// Vertical movement
-		't': { x: 0, y: 0, z: 1, th: 0, desc: 'Up (+Z)' },
-		'b': { x: 0, y: 0, z: -1, th: 0, desc: 'Down (-Z)' },
+	// ROS Mode: WASD key mappings for discrete velocity control
+	const rosWasdKeys: Record<string, { type: 'linear' | 'angular'; direction: 1 | -1; desc: string }> = {
+		'w': { type: 'linear', direction: 1, desc: 'Forward' },
+		's': { type: 'linear', direction: -1, desc: 'Backward' },
+		'a': { type: 'angular', direction: 1, desc: 'Turn Left' },
+		'd': { type: 'angular', direction: -1, desc: 'Turn Right' },
 	};
 	
-	// Speed adjustment bindings
-	const speedBindings: Record<string, { linear: number; angular: number; desc: string }> = {
-		'q': { linear: 1.1, angular: 1.1, desc: 'Speed +10%' },
-		'z': { linear: 0.9, angular: 0.9, desc: 'Speed -10%' },
-		'w': { linear: 1.1, angular: 1.0, desc: 'Linear +10%' },
-		'x': { linear: 0.9, angular: 1.0, desc: 'Linear -10%' },
-		'e': { linear: 1.0, angular: 1.1, desc: 'Angular +10%' },
-		'c': { linear: 1.0, angular: 0.9, desc: 'Angular -10%' },
-	};
-	
-	// Publish interval for continuous key holding
-	let publishIntervalId: ReturnType<typeof setInterval> | null = null;
+	// Publish interval for continuous velocity publishing
+	let rosPublishInterval: ReturnType<typeof setInterval> | null = null;
 	const publishRate = 100; // ms
+	const stepInterval = 150; // ms between velocity step increments
 	
-	// Helper to check if a key is active (case-insensitive for display)
-	function isKeyActive(key: string): boolean {
-		if (!activeKey) return false;
-		return activeKey.toLowerCase() === key.toLowerCase() || 
-			   (key === ',' && activeKey === '<') ||
-			   (key === '.' && activeKey === '>');
+	// Helper to clamp velocity to valid range and quantize to step size
+	function quantizeVelocity(value: number): number {
+		const clamped = Math.max(minVelocity, Math.min(maxVelocity, value));
+		return Math.round(clamped / velocityStep) * velocityStep;
 	}
 	
-	function publishTwist() {
+	// Helper to check if a ROS WASD key is active
+	function isRosKeyActive(key: string): boolean {
+		return activeRosKeys.has(key.toLowerCase());
+	}
+	
+	// Update movement description based on current velocities
+	function updateMovementDescription() {
+		if (linearVelocity === 0 && angularVelocity === 0) {
+			movementDesc = 'Stopped';
+		} else {
+			const parts: string[] = [];
+			if (linearVelocity > 0) parts.push('Forward');
+			else if (linearVelocity < 0) parts.push('Backward');
+			
+			if (angularVelocity > 0) parts.push('Left');
+			else if (angularVelocity < 0) parts.push('Right');
+			
+			movementDesc = parts.join(' + ');
+		}
+	}
+	
+	// Publish ROS twist message with current velocities
+	function publishRosTwist() {
 		if (!$isRosConnected) return;
 		
-		const twist = {
-			linear: {
-				x: currentLinearX * linearSpeed,
-				y: currentLinearY * linearSpeed,
-				z: currentLinearZ * linearSpeed
-			},
-			angular: {
-				x: 0,
-				y: 0,
-				z: currentAngularZ * angularSpeed
-			}
-		};
-		
-		publishCmdVel(twist.linear.x, twist.angular.z);
-		logCommand({ type: 'KEYBOARD_TWIST', data: twist }, 'sent');
+		publishCmdVel(linearVelocity, angularVelocity);
+		logCommand({ 
+			type: 'WASD_VELOCITY', 
+			data: { linear: linearVelocity, angular: angularVelocity } 
+		}, 'sent');
+	}
+	
+	// Increment velocity in discrete steps
+	function incrementVelocity(type: 'linear' | 'angular', direction: 1 | -1) {
+		if (type === 'linear') {
+			linearVelocity = quantizeVelocity(linearVelocity + direction * velocityStep);
+		} else {
+			angularVelocity = quantizeVelocity(angularVelocity + direction * velocityStep);
+		}
+		updateMovementDescription();
 	}
 	
 	// Arduino mode: Check connection status periodically
@@ -135,30 +132,79 @@
 		}
 	}
 	
-	// Arduino mode: Send WASD command
-	async function sendArduinoWASD(key: string) {
-		if (!arduinoConnected) return;
+	// Arduino mode: Increase speed gradually
+	function increaseArduinoSpeed() {
+		if (arduinoSpeed < maxArduinoSpeed) {
+			arduinoSpeed = Math.min(maxArduinoSpeed, arduinoSpeed + arduinoSpeedStep);
+			sendArduinoSpeedCommand();
+		}
+	}
+	
+	// Arduino mode: Send speed command with direction
+	async function sendArduinoSpeedCommand() {
+		if (!arduinoConnected || !activeArduinoKey) return;
 		
-		const command = wasdToArduino[key];
-		if (!command) return;
+		const direction = activeArduinoKey.toLowerCase();
+		const speedValue = arduinoSpeed;
 		
 		try {
+			// Send command as: "w:255" or "s:120", etc.
+			const command = `${direction}:${speedValue}`;
 			await sendArduinoCommand(command);
-			logCommand({ type: 'ARDUINO_CMD', data: { command } }, 'sent');
+			logCommand({ type: 'ARDUINO_SPEED', data: { direction, speed: speedValue } }, 'sent');
 			
 			// Update movement description
 			const descriptions: Record<string, string> = {
-				'W': 'Forward',
-				'S': 'Backward',
-				'A': 'Left',
-				'D': 'Right',
-				'X': 'Stop'
+				'w': 'Forward',
+				's': 'Backward',
+				'a': 'Left',
+				'd': 'Right'
 			};
-			movementDesc = descriptions[command] || 'Moving';
-			activeKey = key;
+			movementDesc = `${descriptions[direction] || 'Moving'} (${speedValue})`;
 		} catch (error: any) {
-			console.error('Arduino command failed:', error);
-			logCommand({ type: 'ARDUINO_CMD', data: { command } }, 'error', error.message);
+			console.error('Arduino speed command failed:', error);
+			logCommand({ type: 'ARDUINO_SPEED', data: { direction, speed: speedValue } }, 'error', error.message);
+		}
+	}
+	
+	// Arduino mode: Send camera command (ijkl)
+	async function sendArduinoCameraCommand(key: string) {
+		if (!arduinoConnected) return;
+		
+		try {
+			await sendArduinoCommand(key);
+			logCommand({ type: 'ARDUINO_CAMERA', data: { key } }, 'sent');
+			
+			const descriptions: Record<string, string> = {
+				'i': 'Camera Up',
+				'j': 'Camera Left',
+				'k': 'Camera Center',
+				'l': 'Camera Right'
+			};
+			console.log(`Camera: ${descriptions[key] || key}`);
+		} catch (error: any) {
+			console.error('Arduino camera command failed:', error);
+			logCommand({ type: 'ARDUINO_CAMERA', data: { key } }, 'error', error.message);
+		}
+	}
+	
+	// Arduino mode: Stop all movement
+	async function stopArduinoMovement() {
+		arduinoSpeed = 0;
+		activeArduinoKey = '';
+		movementDesc = 'Stopped';
+		
+		if (arduinoSpeedInterval) {
+			clearInterval(arduinoSpeedInterval);
+			arduinoSpeedInterval = null;
+		}
+		
+		try {
+			// Send stop command (speed 0)
+			await sendArduinoCommand('x:0');
+			logCommand({ type: 'ARDUINO_STOP' }, 'sent');
+		} catch (error: any) {
+			console.error('Arduino stop failed:', error);
 		}
 	}
 	
@@ -174,6 +220,9 @@
 				if (arduinoConnected) {
 					controlMode = 'arduino';
 					stopMovement(); // Stop ROS movements
+					arduinoSpeed = 0;
+					activeArduinoKey = '';
+					movementDesc = 'Stopped';
 					logCommand({ type: 'MODE_SWITCH', data: { mode: 'arduino' } }, 'sent');
 				} else {
 					throw new Error('Arduino not connected');
@@ -184,11 +233,10 @@
 		} else {
 			// Switch back to ROS
 			try {
+				await stopArduinoMovement();
 				await disconnectArduino();
 				controlMode = 'ros';
 				arduinoConnected = false;
-				movementDesc = 'Stopped';
-				activeKey = '';
 				logCommand({ type: 'MODE_SWITCH', data: { mode: 'ros' } }, 'sent');
 			} catch (error: any) {
 				onEmergencyStop(`Failed to disconnect Arduino: ${error.message}`, 'error');
@@ -202,71 +250,79 @@
 			return;
 		}
 		
-		const key = e.key;
+		const key = e.key.toLowerCase();
 		
-		// Arduino mode: WASD controls
+		// Arduino mode: Speed control (wasd) and camera control (ijkl)
 		if (controlMode === 'arduino') {
-			if (key in wasdToArduino) {
+			// Speed control: lowercase wasd
+			if (key in arduinoSpeedKeys) {
 				e.preventDefault();
-				sendArduinoWASD(key);
+				
+				// Start speed ramping if not already active
+				if (!activeArduinoKey || activeArduinoKey !== key) {
+					activeArduinoKey = key;
+					arduinoSpeed = arduinoSpeedStep; // Start at minimum speed
+					sendArduinoSpeedCommand();
+					
+					// Start interval to increase speed while key is held
+					if (arduinoSpeedInterval) {
+						clearInterval(arduinoSpeedInterval);
+					}
+					arduinoSpeedInterval = setInterval(() => {
+						increaseArduinoSpeed();
+					}, 100); // Increase speed every 100ms
+				}
 				return;
 			}
-			// Stop key (k or K) also works in Arduino mode
-			if (key === 'k' || key === 'K') {
+			
+			// Camera control: lowercase ijkl
+			if (key in arduinoCameraKeys) {
 				e.preventDefault();
-				sendArduinoWASD(' '); // Send stop command
+				sendArduinoCameraCommand(key);
+				return;
+			}
+			
+			// Stop key (spacebar or x)
+			if (key === ' ' || key === 'x') {
+				e.preventDefault();
+				stopArduinoMovement();
 				return;
 			}
 			return; // Ignore other keys in Arduino mode
 		}
 		
-		// ROS mode: Original teleop_twist_keyboard controls
-		// Track holonomic mode
-		if (e.shiftKey) {
-			holonomicMode = true;
-		}
-		
-		// Check for movement keys
-		if (key in moveBindings) {
+		// ROS mode: WASD velocity control
+		// Check for WASD movement keys
+		if (key in rosWasdKeys) {
 			e.preventDefault();
-			const binding = moveBindings[key];
-			currentLinearX = binding.x;
-			currentLinearY = binding.y;
-			currentLinearZ = binding.z;
-			currentAngularZ = binding.th;
-			activeKey = key;
-			movementDesc = binding.desc;
 			
-			// Start publishing if not already
-			if (!publishIntervalId) {
-				publishTwist();
-				publishIntervalId = setInterval(publishTwist, publishRate);
+			// Start velocity ramping if not already active for this key
+			if (!activeRosKeys.has(key)) {
+				activeRosKeys.add(key);
+				const keyConfig = rosWasdKeys[key];
+				
+				// Immediately increment once
+				incrementVelocity(keyConfig.type, keyConfig.direction);
+				
+				// Start interval to continue incrementing while held
+				const intervalId = setInterval(() => {
+					incrementVelocity(keyConfig.type, keyConfig.direction);
+				}, stepInterval);
+				
+				rosKeyIntervals.set(key, intervalId);
+				
+				// Start continuous publishing if not already running
+				if (!rosPublishInterval) {
+					rosPublishInterval = setInterval(publishRosTwist, publishRate);
+				}
 			}
 			return;
 		}
 		
-		// Check for speed adjustment keys
-		if (key in speedBindings) {
+		// Stop key (spacebar)
+		if (key === ' ') {
 			e.preventDefault();
-			const binding = speedBindings[key];
-			linearSpeed = Math.min(maxLinearSpeed, Math.max(0.1, linearSpeed * binding.linear));
-			angularSpeed = Math.min(maxAngularSpeed, Math.max(0.1, angularSpeed * binding.angular));
-			
-			// Round to 2 decimal places
-			linearSpeed = Math.round(linearSpeed * 100) / 100;
-			angularSpeed = Math.round(angularSpeed * 100) / 100;
-			return;
-		}
-		
-		// Stop key (k or K)
-		if (key === 'k' || key === 'K') {
-			e.preventDefault();
-			stopMovement();
-			activeKey = 'k';
-			movementDesc = 'Stop';
-			setTimeout(() => {
-				if (activeKey === 'k') activeKey = '';
-			}, 150);
+			stopRosMovement();
 			return;
 		}
 	}
@@ -277,35 +333,71 @@
 			return;
 		}
 		
-		const key = e.key;
+		const key = e.key.toLowerCase();
 		
-		// Track holonomic mode
-		if (key === 'Shift') {
-			holonomicMode = false;
+		// Arduino mode: Stop speed ramping when key is released
+		if (controlMode === 'arduino') {
+			if (key in arduinoSpeedKeys && key === activeArduinoKey) {
+				// Stop increasing speed, but maintain current speed
+				if (arduinoSpeedInterval) {
+					clearInterval(arduinoSpeedInterval);
+					arduinoSpeedInterval = null;
+				}
+				// Keep the speed at current level until stop is pressed
+			}
+			return;
 		}
 		
-		// Note: Movement keys do NOT stop on release - they set persistent state
-		// Only 'K' key or explicit stop command will halt movement
+		// ROS mode: Stop velocity ramping for this key
+		if (key in rosWasdKeys && activeRosKeys.has(key)) {
+			activeRosKeys.delete(key);
+			
+			// Clear the interval for this key
+			const intervalId = rosKeyIntervals.get(key);
+			if (intervalId) {
+				clearInterval(intervalId);
+				rosKeyIntervals.delete(key);
+			}
+			
+			// If no keys are held and velocity is zero, stop publishing
+			if (activeRosKeys.size === 0 && linearVelocity === 0 && angularVelocity === 0) {
+				if (rosPublishInterval) {
+					clearInterval(rosPublishInterval);
+					rosPublishInterval = null;
+				}
+			}
+		}
 	}
 	
-	function stopMovement() {
-		currentLinearX = 0;
-		currentLinearY = 0;
-		currentLinearZ = 0;
-		currentAngularZ = 0;
-		activeKey = '';
+	// Stop ROS movement (set velocities to zero)
+	function stopRosMovement() {
+		linearVelocity = 0;
+		angularVelocity = 0;
+		activeRosKeys.clear();
 		movementDesc = 'Stopped';
 		
-		if (publishIntervalId) {
-			clearInterval(publishIntervalId);
-			publishIntervalId = null;
+		// Clear all key intervals
+		for (const intervalId of rosKeyIntervals.values()) {
+			clearInterval(intervalId);
+		}
+		rosKeyIntervals.clear();
+		
+		// Stop publishing interval
+		if (rosPublishInterval) {
+			clearInterval(rosPublishInterval);
+			rosPublishInterval = null;
 		}
 		
 		// Send stop command
 		if ($isRosConnected) {
 			publishCmdVel(0, 0);
-			logCommand({ type: 'KEYBOARD_STOP' }, 'sent');
+			logCommand({ type: 'WASD_STOP' }, 'sent');
 		}
+	}
+	
+	// Legacy stopMovement for compatibility (calls stopRosMovement)
+	function stopMovement() {
+		stopRosMovement();
 	}
 	
 	// Emergency stop via ROS or Arduino
@@ -314,13 +406,12 @@
 			logCommand({ type: 'EMERGENCY_STOP' }, 'sent');
 			
 			if (controlMode === 'arduino') {
-				// Arduino mode: send stop command
+				// Arduino mode: stop all movement
+				await stopArduinoMovement();
 				await stopArduino();
-				movementDesc = 'Stopped';
-				activeKey = '';
 			} else {
-				// ROS mode: use ROS stop
-				stopMovement();
+				// ROS mode: stop all movement
+				stopRosMovement();
 				const success = await stopRover();
 				if (!success) {
 					throw new Error('Failed to stop rover');
@@ -350,15 +441,26 @@
 	onDestroy(() => {
 		window.removeEventListener('keydown', handleKeyDown);
 		window.removeEventListener('keyup', handleKeyUp);
-		if (publishIntervalId) {
-			clearInterval(publishIntervalId);
+		
+		// Clean up ROS intervals
+		if (rosPublishInterval) {
+			clearInterval(rosPublishInterval);
 		}
+		for (const intervalId of rosKeyIntervals.values()) {
+			clearInterval(intervalId);
+		}
+		
+		// Clean up Arduino intervals
 		if (arduinoCheckInterval) {
 			clearInterval(arduinoCheckInterval);
+		}
+		if (arduinoSpeedInterval) {
+			clearInterval(arduinoSpeedInterval);
 		}
 		
 		// Disconnect Arduino on unmount if connected
 		if (controlMode === 'arduino' && arduinoConnected) {
+			stopArduinoMovement().catch(console.error);
 			disconnectArduino().catch(console.error);
 		}
 	});
@@ -410,201 +512,222 @@
 			<div class="status-item">
 				<span class="status-label">Mode</span>
 				<span class="status-value mode-value">
-					{controlMode === 'arduino' ? 'Arduino (WASD)' : 'ROS (UIJKLM,.)'}
+					{controlMode === 'arduino' ? 'Arduino (wasd/ijkl)' : 'ROS (WASD)'}
 				</span>
 			</div>
 			<div class="status-item">
 				<span class="status-label">Status</span>
-				<span class="status-value" class:active={activeKey !== ''}>{movementDesc}</span>
+				<span class="status-value" class:active={activeRosKeys.size > 0 || activeArduinoKey !== ''}>
+					{movementDesc}
+				</span>
 			</div>
-			{#if controlMode === 'ros'}
+			{#if controlMode === 'arduino'}
 			<div class="status-item">
-				<span class="status-label">Holonomic</span>
-				<span class="status-value">{holonomicMode ? 'Active' : 'Normal'}</span>
+				<span class="status-label">Speed</span>
+				<span class="status-value speed-value">{arduinoSpeed} / {maxArduinoSpeed}</span>
+			</div>
+			{:else}
+			<div class="status-item">
+				<span class="status-label">Linear</span>
+				<span class="status-value speed-value">{linearVelocity.toFixed(2)} m/s</span>
+			</div>
+			<div class="status-item">
+				<span class="status-label">Angular</span>
+				<span class="status-value speed-value">{angularVelocity.toFixed(2)} rad/s</span>
 			</div>
 			{/if}
 		</div>
 		
-		<!-- Arduino Mode: WASD Controls -->
+		<!-- Arduino Mode: Speed Controls (wasd) and Camera Controls (ijkl) -->
 		{#if controlMode === 'arduino'}
-		<div class="keyboard-layout">
+		<div class="arduino-layout">
+			<!-- Speed Control Section -->
 			<div class="keyboard-section">
 				<div class="section-header">
 					<Cpu class="w-3 h-3" />
-					<span>Arduino WASD Controls</span>
+					<span>Speed Control (wasd)</span>
 				</div>
 				
 				<div class="key-grid wasd-grid">
 					<!-- Row 1: W -->
 					<div></div>
-					<button class="key" class:active={activeKey === 'w' || activeKey === 'W'} title="Forward">
+					<button class="key" class:active={activeArduinoKey === 'w'} title="Forward (hold to increase speed)">
 						<span class="key-label">W</span>
 						<span class="key-icon">&#8593;</span>
 					</button>
 					<div></div>
 					
 					<!-- Row 2: A S D -->
-					<button class="key" class:active={activeKey === 'a' || activeKey === 'A'} title="Left">
+					<button class="key" class:active={activeArduinoKey === 'a'} title="Left (hold to increase speed)">
 						<span class="key-label">A</span>
 						<span class="key-icon">&#8592;</span>
 					</button>
-					<button class="key" class:active={activeKey === 's' || activeKey === 'S'} title="Backward">
+					<button class="key" class:active={activeArduinoKey === 's'} title="Backward (hold to increase speed)">
 						<span class="key-label">S</span>
 						<span class="key-icon">&#8595;</span>
 					</button>
-					<button class="key" class:active={activeKey === 'd' || activeKey === 'D'} title="Right">
+					<button class="key" class:active={activeArduinoKey === 'd'} title="Right (hold to increase speed)">
 						<span class="key-label">D</span>
 						<span class="key-icon">&#8594;</span>
 					</button>
 					
-					<!-- Row 3: Spacebar -->
+					<!-- Row 3: Stop -->
 					<div></div>
-					<button class="key stop-key wide-key" class:active={activeKey === ' ' || activeKey === 'k'} title="Stop">
-						<span class="key-label">SPACE / K</span>
+					<button class="key stop-key wide-key" title="Stop">
+						<span class="key-label">SPACE / X</span>
 						<span class="key-icon"><Square class="w-3 h-3" /></span>
 					</button>
 					<div></div>
 				</div>
 				
 				<div class="mode-hint">
-					<span class="hint-text">Use WASD keys to control rover via Arduino</span>
-				</div>
-			</div>
-		</div>
-		{:else}
-		<!-- ROS Mode: Original teleop_twist_keyboard Layout -->
-		<div class="keyboard-layout">
-			<!-- Movement Keys Section -->
-			<div class="keyboard-section">
-				<div class="section-header">
-					<Move class="w-3 h-3" />
-					<span>Movement</span>
-				</div>
-				
-				<div class="key-grid movement-grid">
-					<!-- Row 1: U I O -->
-					<button class="key" class:active={isKeyActive('u')} title="Forward + Turn Left">
-						<span class="key-label">U</span>
-						<span class="key-icon">&#8598;</span>
-					</button>
-					<button class="key" class:active={isKeyActive('i')} title="Forward">
-						<span class="key-label">I</span>
-						<span class="key-icon">&#8593;</span>
-					</button>
-					<button class="key" class:active={isKeyActive('o')} title="Forward + Turn Right">
-						<span class="key-label">O</span>
-						<span class="key-icon">&#8599;</span>
-					</button>
-					
-					<!-- Row 2: J K L -->
-					<button class="key" class:active={isKeyActive('j')} title="Turn Left">
-						<span class="key-label">J</span>
-						<span class="key-icon"><RotateCcw class="w-3 h-3" /></span>
-					</button>
-					<button class="key stop-key" class:active={isKeyActive('k')} title="Stop">
-						<span class="key-label">K</span>
-						<span class="key-icon"><Square class="w-3 h-3" /></span>
-					</button>
-					<button class="key" class:active={isKeyActive('l')} title="Turn Right">
-						<span class="key-label">L</span>
-						<span class="key-icon"><RotateCw class="w-3 h-3" /></span>
-					</button>
-					
-					<!-- Row 3: M , . -->
-					<button class="key" class:active={isKeyActive('m')} title="Backward + Turn Right">
-						<span class="key-label">M</span>
-						<span class="key-icon">&#8601;</span>
-					</button>
-					<button class="key" class:active={isKeyActive(',')} title="Backward">
-						<span class="key-label">,</span>
-						<span class="key-icon">&#8595;</span>
-					</button>
-					<button class="key" class:active={isKeyActive('.')} title="Backward + Turn Left">
-						<span class="key-label">.</span>
-						<span class="key-icon">&#8600;</span>
-					</button>
-				</div>
-				
-				<div class="mode-hint">
-					{#if holonomicMode}
-						<Badge variant="default" class="text-xs">Shift Held - Strafing</Badge>
-					{:else}
-						<span class="hint-text">Hold Shift for strafe</span>
-					{/if}
+					<span class="hint-text">Hold keys to increase speed (0-255)</span>
 				</div>
 			</div>
 			
-			<!-- Vertical & Speed Section -->
+			<!-- Camera Control Section -->
 			<div class="keyboard-section">
-				<!-- Vertical Control -->
-				<div class="sub-section">
-					<div class="section-header">
-						<ArrowUp class="w-3 h-3" />
-						<span>Vertical</span>
-					</div>
-					<div class="key-row vertical-keys">
-						<button class="key small" class:active={isKeyActive('t')} title="Up (+Z)">
-							<span class="key-label">T</span>
-							<span class="key-hint">Up</span>
-						</button>
-						<button class="key small" class:active={isKeyActive('b')} title="Down (-Z)">
-							<span class="key-label">B</span>
-							<span class="key-hint">Down</span>
-						</button>
-					</div>
+				<div class="section-header">
+					<Move class="w-3 h-3" />
+					<span>Camera Control (ijkl)</span>
 				</div>
 				
-				<!-- Speed Control -->
-				<div class="sub-section">
-					<div class="section-header">
-						<span>Speed Control</span>
-					</div>
-					<div class="speed-keys">
-						<div class="speed-key-row">
-							<button class="key tiny">Q</button>
-							<button class="key tiny">Z</button>
-							<span class="key-desc">All ±10%</span>
-						</div>
-						<div class="speed-key-row">
-							<button class="key tiny">W</button>
-							<button class="key tiny">X</button>
-							<span class="key-desc">Linear ±10%</span>
-						</div>
-						<div class="speed-key-row">
-							<button class="key tiny">E</button>
-							<button class="key tiny">C</button>
-							<span class="key-desc">Angular ±10%</span>
-						</div>
-					</div>
+				<div class="key-grid wasd-grid">
+					<!-- Row 1: I -->
+					<div></div>
+					<button class="key small" title="Camera Up">
+						<span class="key-label">I</span>
+						<span class="key-icon">&#8593;</span>
+					</button>
+					<div></div>
+					
+					<!-- Row 2: J K L -->
+					<button class="key small" title="Camera Left">
+						<span class="key-label">J</span>
+						<span class="key-icon">&#8592;</span>
+					</button>
+					<button class="key small stop-key" title="Camera Center">
+						<span class="key-label">K</span>
+						<span class="key-icon"><Square class="w-3 h-3" /></span>
+					</button>
+					<button class="key small" title="Camera Right">
+						<span class="key-label">L</span>
+						<span class="key-icon">&#8594;</span>
+					</button>
+				</div>
+				
+				<div class="mode-hint">
+					<span class="hint-text">Camera control keys</span>
 				</div>
 			</div>
 		</div>
 		
-		<!-- Speed Display (ROS mode only) -->
+		<!-- Arduino Speed Display -->
+		<div class="speed-display">
+			<div class="speed-bar">
+				<div class="speed-info">
+					<span class="speed-label">Speed</span>
+					<span class="speed-value">{arduinoSpeed}</span>
+					<span class="speed-unit">/ 255</span>
+				</div>
+				<div class="speed-bar-track">
+					<div 
+						class="speed-bar-fill arduino-speed" 
+						style="width: {(arduinoSpeed / maxArduinoSpeed) * 100}%"
+					></div>
+				</div>
+			</div>
+			<div class="arduino-speed-hint">
+				<span class="hint-text">Hold W/A/S/D to increase speed in steps of {arduinoSpeedStep}</span>
+			</div>
+		</div>
+		{:else}
+		<!-- ROS Mode: WASD Movement Controls -->
+		<div class="keyboard-layout">
+			<!-- WASD Movement Keys Section -->
+			<div class="keyboard-section">
+				<div class="section-header">
+					<Move class="w-3 h-3" />
+					<span>Movement (WASD)</span>
+				</div>
+				
+				<div class="key-grid wasd-grid">
+					<!-- Row 1: W -->
+					<div></div>
+					<button class="key" class:active={isRosKeyActive('w')} title="Forward (hold to accelerate)">
+						<span class="key-label">W</span>
+						<span class="key-icon">&#8593;</span>
+						<span class="key-hint">Forward</span>
+					</button>
+					<div></div>
+					
+					<!-- Row 2: A S D -->
+					<button class="key" class:active={isRosKeyActive('a')} title="Turn Left (hold to increase)">
+						<span class="key-label">A</span>
+						<span class="key-icon"><RotateCcw class="w-3 h-3" /></span>
+						<span class="key-hint">Left</span>
+					</button>
+					<button class="key" class:active={isRosKeyActive('s')} title="Backward (hold to accelerate)">
+						<span class="key-label">S</span>
+						<span class="key-icon">&#8595;</span>
+						<span class="key-hint">Backward</span>
+					</button>
+					<button class="key" class:active={isRosKeyActive('d')} title="Turn Right (hold to increase)">
+						<span class="key-label">D</span>
+						<span class="key-icon"><RotateCw class="w-3 h-3" /></span>
+						<span class="key-hint">Right</span>
+					</button>
+					
+					<!-- Row 3: Stop -->
+					<div></div>
+					<button class="key stop-key wide-key" title="Stop All Movement">
+						<span class="key-label">SPACE</span>
+						<span class="key-icon"><Square class="w-3 h-3" /></span>
+					</button>
+					<div></div>
+				</div>
+				
+				<div class="mode-hint">
+					<span class="hint-text">Hold keys to increase velocity in steps of {velocityStep}</span>
+				</div>
+			</div>
+		</div>
+		
+		<!-- Velocity Display (ROS mode only) -->
 		<div class="speed-display">
 			<div class="speed-bar">
 				<div class="speed-info">
 					<span class="speed-label">Linear</span>
-					<span class="speed-value">{linearSpeed.toFixed(2)}</span>
+					<span class="speed-value" class:positive={linearVelocity > 0} class:negative={linearVelocity < 0}>
+						{linearVelocity >= 0 ? '+' : ''}{linearVelocity.toFixed(2)}
+					</span>
 					<span class="speed-unit">m/s</span>
 				</div>
-				<div class="speed-bar-track">
+				<div class="speed-bar-track bidirectional">
+					<div class="speed-bar-center"></div>
 					<div 
 						class="speed-bar-fill" 
-						style="width: {(linearSpeed / maxLinearSpeed) * 100}%"
+						class:forward={linearVelocity > 0}
+						class:backward={linearVelocity < 0}
+						style="width: {Math.abs(linearVelocity) * 50}%; {linearVelocity >= 0 ? 'left: 50%' : 'right: 50%'}"
 					></div>
 				</div>
 			</div>
 			<div class="speed-bar">
 				<div class="speed-info">
 					<span class="speed-label">Angular</span>
-					<span class="speed-value">{angularSpeed.toFixed(2)}</span>
+					<span class="speed-value" class:positive={angularVelocity > 0} class:negative={angularVelocity < 0}>
+						{angularVelocity >= 0 ? '+' : ''}{angularVelocity.toFixed(2)}
+					</span>
 					<span class="speed-unit">rad/s</span>
 				</div>
-				<div class="speed-bar-track">
+				<div class="speed-bar-track bidirectional">
+					<div class="speed-bar-center"></div>
 					<div 
 						class="speed-bar-fill angular" 
-						style="width: {(angularSpeed / maxAngularSpeed) * 100}%"
+						class:left={angularVelocity > 0}
+						class:right={angularVelocity < 0}
+						style="width: {Math.abs(angularVelocity) * 50}%; {angularVelocity >= 0 ? 'left: 50%' : 'right: 50%'}"
 					></div>
 				</div>
 			</div>
@@ -656,6 +779,19 @@
 		font-weight: 600;
 	}
 	
+	.status-value.speed-value {
+		color: var(--green);
+		font-family: monospace;
+		font-weight: 600;
+	}
+	
+	.arduino-layout {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 1.5rem;
+		margin-bottom: 1rem;
+	}
+	
 	.keyboard-layout {
 		display: grid;
 		grid-template-columns: 1fr auto;
@@ -695,10 +831,6 @@
 		gap: 0.25rem;
 	}
 	
-	.movement-grid {
-		grid-template-columns: repeat(3, 1fr);
-	}
-	
 	.key {
 		display: flex;
 		flex-direction: column;
@@ -732,22 +864,10 @@
 		border-color: var(--slate-600);
 	}
 	
-	.key.stop-key.active {
-		background: var(--red);
-		border-color: var(--red);
-	}
-	
 	.key.small {
 		min-width: 2.5rem;
 		min-height: 2.5rem;
 		padding: 0.375rem;
-	}
-	
-	.key.tiny {
-		min-width: 1.75rem;
-		min-height: 1.5rem;
-		padding: 0.25rem;
-		font-size: 0.625rem;
 	}
 	
 	.key-label {
@@ -780,38 +900,6 @@
 	.hint-text {
 		font-size: 0.625rem;
 		color: var(--slate-500);
-	}
-	
-	.sub-section {
-		margin-bottom: 0.75rem;
-	}
-	
-	.key-row {
-		display: flex;
-		gap: 0.25rem;
-	}
-	
-	.vertical-keys {
-		margin-top: 0.375rem;
-	}
-	
-	.speed-keys {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		margin-top: 0.375rem;
-	}
-	
-	.speed-key-row {
-		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-	}
-	
-	.key-desc {
-		font-size: 0.625rem;
-		color: var(--slate-500);
-		margin-left: 0.25rem;
 	}
 	
 	.speed-display {
@@ -852,6 +940,14 @@
 		color: var(--sky-light);
 	}
 	
+	.speed-value.positive {
+		color: var(--sky-light);
+	}
+	
+	.speed-value.negative {
+		color: var(--amber);
+	}
+	
 	.speed-unit {
 		font-size: 0.625rem;
 		color: var(--slate-500);
@@ -863,6 +959,21 @@
 		background: var(--slate-700);
 		border-radius: 0.1875rem;
 		overflow: hidden;
+		position: relative;
+	}
+	
+	.speed-bar-track.bidirectional {
+		background: var(--slate-700);
+	}
+	
+	.speed-bar-center {
+		position: absolute;
+		left: 50%;
+		top: 0;
+		bottom: 0;
+		width: 2px;
+		background: var(--slate-500);
+		z-index: 1;
 	}
 	
 	.speed-bar-fill {
@@ -870,10 +981,38 @@
 		background: var(--sky-blue);
 		border-radius: 0.1875rem;
 		transition: width 0.15s ease;
+		position: absolute;
+		top: 0;
+		bottom: 0;
+	}
+	
+	.speed-bar-fill.forward {
+		background: var(--sky-blue);
+	}
+	
+	.speed-bar-fill.backward {
+		background: var(--amber);
 	}
 	
 	.speed-bar-fill.angular {
 		background: var(--green);
+	}
+	
+	.speed-bar-fill.left {
+		background: var(--green);
+	}
+	
+	.speed-bar-fill.right {
+		background: var(--green);
+	}
+	
+	.speed-bar-fill.arduino-speed {
+		background: var(--green);
+	}
+	
+	.arduino-speed-hint {
+		margin-top: 0.25rem;
+		text-align: center;
 	}
 	
 	.emergency-stop {

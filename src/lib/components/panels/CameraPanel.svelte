@@ -409,11 +409,20 @@
 				{#each cameras.filter(cam => cam.name !== 'microscope') as camera}
 				{@const mode = streamingModes.get(camera.name) || 'websocket'}
 				{@const metrics = getMetrics(camera.name)}
+				{@const isNamedCamera = camera.is_named !== false}
 				<div class="bg-secondary rounded-lg border border-border overflow-hidden">
 					<!-- Camera Header -->
 					<div class="p-3 bg-card border-b border-border flex justify-between items-center">
 						<div>
-							<h3 class="font-semibold text-foreground">{camera.name}</h3>
+							<div class="flex items-center gap-2">
+								<h3 class="font-semibold text-foreground">{camera.name}</h3>
+								{#if !isNamedCamera}
+								<Badge variant="secondary" class="text-xs">Generic</Badge>
+								{/if}
+							</div>
+							<p class="text-xs text-muted-foreground">
+								{camera.device_path}
+							</p>
 							<p class="text-xs text-muted-foreground">
 								{camera.default_resolution} @ {camera.default_fps}fps | {camera.backend}
 							</p>
