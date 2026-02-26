@@ -529,11 +529,11 @@
 			{:else}
 			<div class="status-item">
 				<span class="status-label">Linear</span>
-				<span class="status-value speed-value">{linearVelocity.toFixed(2)} m/s</span>
+				<span class="status-value speed-value">{linearVelocity.toFixed(1)} m/s</span>
 			</div>
 			<div class="status-item">
 				<span class="status-label">Angular</span>
-				<span class="status-value speed-value">{angularVelocity.toFixed(2)} rad/s</span>
+				<span class="status-value speed-value">{angularVelocity.toFixed(1)} rad/s</span>
 			</div>
 			{/if}
 		</div>

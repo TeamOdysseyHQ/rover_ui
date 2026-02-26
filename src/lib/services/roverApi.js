@@ -925,3 +925,23 @@ export async function stopArduino() {
 export async function reconnectArduino() {
     return apiRequest('/api/nav/arduino/reconnect', { method: 'POST' });
 }
+
+// ============================================
+// ANDROID SENSOR ENDPOINTS (/api/android/)
+// ============================================
+
+/**
+ * Get Android sensor connection status and latest readings
+ */
+export async function getAndroidSensorStatus() {
+    return apiRequest('/api/android/sensors/status', { method: 'GET' });
+}
+
+/**
+ * Get WebSocket URL for Android sensor streaming
+ */
+export function getAndroidSensorWebSocketUrl() {
+    // Convert HTTP base URL to WebSocket URL
+    const wsBaseUrl = API_BASE_URL.replace(/^http/, 'ws');
+    return `${wsBaseUrl}/api/android/sensors/ws`;
+}

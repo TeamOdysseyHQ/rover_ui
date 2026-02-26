@@ -2,6 +2,7 @@
 	import * as roverApi from '$lib/services/roverApi';
 	
 	// Panels
+    import AndroidPanel from '$lib/components/panels/AndroidSensorPanel.svelte';
     import ROSCameraPanel from '$lib/components/panels/RosCameraPanel.svelte';
 	import CameraPanel from '$lib/components/panels/CameraPanel.svelte';
 	import ConnectionPanel from '$lib/components/panels/ConnectionPanel.svelte';
@@ -90,7 +91,6 @@
 		<FeedbackMessage bind:this={feedbackComponent} bind:show={showFeedback} />
 		
 		<DashboardHeader {activeMission} />
-        <ROSCameraPanel />
 		
 		<!-- Mission Tabs -->
 		<MissionTabs {activeMission} onMissionChange={(mission) => activeMission = mission} />
@@ -99,6 +99,7 @@
 		<section class="mb-6">
 			<CameraPanel />
 		</section>
+
 		
 		<main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 			<div class="space-y-6 xl:col-span-1">
@@ -106,6 +107,7 @@
 				
 				<!-- <TeensyTopicPanel /> -->
 				
+        <AndroidPanel />
 				<!-- Mission-Specific Panel -->
 				{#if activeMission === 'abex'}
 					<ABExPanel />
