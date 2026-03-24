@@ -560,3 +560,152 @@ export class VideoStreamManager {
 
 // Export singleton instance
 export const videoStreamManager = new VideoStreamManager();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebRTC Streaming Client
+// ─────────────────────────────────────────────────────────────────────────────
+
+type WebRtcState = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+/** Maps HTTP error status codes to human-readable messages */
+function webRtcErrorMessage(status: number): string {
+	switch (status) {
+		case 400: return 'Camera not started — click Start first';
+		case 404: return 'Camera not found';
+		case 429: return 'Too many viewers — try MJPEG mode';
+		case 503: return 'ROS not connected';
+		case 500: return 'Stream error — retrying in 5s';
+		default:  return `Stream error (HTTP ${status})`;
+	}
+}
+
+export class WebRtcStreamClient {
+	private pc: RTCPeerConnection | null = null;
+	private state: WebRtcState = 'disconnected';
+
+	private onStateChangeCallback: ((state: WebRtcState) => void) | null = null;
+	private onErrorCallback: ((err: Error & { status?: number }) => void) | null = null;
+
+	onStateChange(cb: (state: WebRtcState) => void): void {
+		this.onStateChangeCallback = cb;
+	}
+
+	onError(cb: (err: Error & { status?: number }) => void): void {
+		this.onErrorCallback = cb;
+	}
+
+	private setState(s: WebRtcState): void {
+		this.state = s;
+		this.onStateChangeCallback?.(s);
+	}
+
+	getState(): WebRtcState {
+		return this.state;
+	}
+
+	/**
+	 * Establish a WebRTC connection.
+	 * @param offerUrl  Full URL to POST the SDP offer to (e.g. http://…/webrtc/offer)
+	 * @param videoEl   <video> element that will receive the remote stream
+	 * @param fps       Desired framerate sent in the offer body (default 30)
+	 */
+	async connect(offerUrl: string, videoEl: HTMLVideoElement, fps = 30): Promise<void> {
+		if (this.state === 'connected' || this.state === 'connecting') {
+			console.warn('[WebRtcStreamClient] Already connected or connecting');
+			return;
+		}
+
+		this.setState('connecting');
+
+		const pc = new RTCPeerConnection({ iceServers: [] });
+		this.pc = pc;
+
+		// Attach incoming video stream to the <video> element
+		pc.ontrack = (event) => {
+			if (event.streams?.[0]) {
+				videoEl.srcObject = event.streams[0];
+			}
+		};
+
+		pc.onconnectionstatechange = () => {
+			if (pc.connectionState === 'connected') {
+				this.setState('connected');
+			} else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+				this.setState('disconnected');
+			}
+		};
+
+		// Receive-only — we send no video
+		pc.addTransceiver('video', { direction: 'recvonly' });
+
+		// Create and set local offer
+		const offer = await pc.createOffer();
+		await pc.setLocalDescription(offer);
+
+		// Wait for ICE gathering to complete (with 2 s fallback)
+		await new Promise<void>((resolve) => {
+			if (pc.iceGatheringState === 'complete') {
+				resolve();
+				return;
+			}
+			const onchange = () => {
+				if (pc.iceGatheringState === 'complete') {
+					pc.removeEventListener('icegatheringstatechange', onchange);
+					resolve();
+				}
+			};
+			pc.addEventListener('icegatheringstatechange', onchange);
+			setTimeout(resolve, 2000);
+		});
+
+		// POST the offer to the backend
+		let res: Response;
+		try {
+			res = await fetch(offerUrl, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					sdp: pc.localDescription!.sdp,
+					type: pc.localDescription!.type,
+					fps
+				})
+			});
+		} catch (fetchErr) {
+			this.setState('error');
+			const e = fetchErr instanceof Error ? fetchErr : new Error(String(fetchErr));
+			this.onErrorCallback?.(e);
+			throw e;
+		}
+
+		if (!res.ok) {
+			this.setState('error');
+			const body = await res.json().catch(() => ({}));
+			const msg = body.detail ?? webRtcErrorMessage(res.status);
+			const err = Object.assign(new Error(msg), { status: res.status });
+			this.onErrorCallback?.(err);
+			throw err;
+		}
+
+		const answer = await res.json();
+		await pc.setRemoteDescription({ type: answer.type, sdp: answer.sdp });
+		// State will be set to 'connected' via onconnectionstatechange, but
+		// set it here too as a fast-path for implementations that check immediately.
+		this.setState('connected');
+	}
+
+	/**
+	 * Close the WebRTC peer connection and notify the server.
+	 * @param deleteUrl  Full URL to DELETE (e.g. http://…/webrtc)
+	 */
+	async disconnect(deleteUrl: string): Promise<void> {
+		this.pc?.close();
+		this.pc = null;
+		this.setState('disconnected');
+		try {
+			await fetch(deleteUrl, { method: 'DELETE' });
+		} catch (e) {
+			// Best-effort — don't throw on server-side cleanup failure
+			console.warn('[WebRtcStreamClient] DELETE failed:', e);
+		}
+	}
+}

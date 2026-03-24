@@ -10,6 +10,7 @@
 	import RosStatusPanel from '$lib/components/panels/RosStatusPanel.svelte';
 	import TeensyTopicPanel from '$lib/components/panels/TeensyTopicPanel.svelte';
 	import ArmControlPanel from '$lib/components/panels/ArmControlPanel.svelte';
+	import MotorRpmPanel from '$lib/components/panels/MotorRpmPanel.svelte';
 	
 	// Sections
 	import DashboardHeader from '$lib/components/sections/DashboardHeader.svelte';
@@ -120,6 +121,7 @@
 
             <div class="space-y-6">
 				<RosStatusPanel />
+				<MotorRpmPanel />
 				<CommandLog />
             </div>
 

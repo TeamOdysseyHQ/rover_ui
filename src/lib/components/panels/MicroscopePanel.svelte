@@ -1,12 +1,13 @@
 <script lang="ts">
-	import { Microscope, Power, PowerOff, Camera, Wifi, WifiOff, Activity, AlertCircle } from 'lucide-svelte';
+	import { Microscope, Power, PowerOff, Camera, Wifi, WifiOff, Activity, Radio, AlertCircle } from 'lucide-svelte';
 	import { apiStatus } from '$lib/stores/apiStore';
 	import { expeditionStore, currentExpeditionId, isExpeditionActive } from '$lib/stores/expeditionStore';
 	import * as roverApi from '$lib/services/roverApi';
-	import { VideoStreamClient, type StreamMetrics } from '$lib/services/videoStreamService';
+	import { VideoStreamClient, WebRtcStreamClient, type StreamMetrics } from '$lib/services/videoStreamService';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
+	import { onMount } from 'svelte';
 	
 	// Props
 	let { 
@@ -22,8 +23,8 @@
 	let feedbackType = $state<'success' | 'error'>('success');
 	let showFeedback = $state(false);
 	
-	// Streaming mode: 'mjpeg' or 'websocket'
-	let streamingMode = $state<'mjpeg' | 'websocket'>('websocket');
+	// Streaming mode: 'mjpeg' | 'websocket' | 'webrtc'
+	let streamingMode = $state<'mjpeg' | 'websocket' | 'webrtc'>('webrtc');
 	
 	// WebSocket client
 	let wsClient = $state<VideoStreamClient | null>(null);
@@ -31,8 +32,21 @@
 	// Stream metrics
 	let metrics = $state<StreamMetrics | null>(null);
 	
-	// Canvas ref
+	// Canvas ref (WebSocket)
 	let canvasRef = $state<HTMLCanvasElement | undefined>();
+	
+	// WebRTC client
+	let webrtcClient = $state<WebRtcStreamClient | null>(null);
+	let videoRef = $state<HTMLVideoElement | undefined>();
+	let webrtcStatus = $state<{ active_connections: number; max_connections: number } | null>(null);
+	let webrtcStatusInterval: ReturnType<typeof setInterval> | null = null;
+	let webrtcRetryTimer: ReturnType<typeof setTimeout> | null = null;
+	let webrtcRetryCount = 0;
+	
+	// MJPEG fps/quality
+	let mjpegFps = $state(30);
+	let mjpegQuality = $state(80);
+	let mjpegDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 	
 	// Telemetry for captures
 	let telemetry = $state({
@@ -65,9 +79,9 @@
 			
 			// Start streaming based on mode
 			if (streamingMode === 'websocket') {
-				setTimeout(() => {
-					startWebSocketStream();
-				}, 100);
+				setTimeout(() => startWebSocketStream(), 100);
+			} else if (streamingMode === 'webrtc') {
+				setTimeout(() => startWebRtcStream(), 100);
 			}
 			
 			showFeedbackMsg(`Microscope started (${streamingMode.toUpperCase()})`, 'success');
@@ -81,9 +95,8 @@
 	// Stop microscope
 	async function stopMicroscope() {
 		try {
-			// Stop WebSocket if active
 			stopWebSocketStream();
-			
+			await stopWebRtcStream();
 			await roverApi.stopMicroscope();
 			microscopeActive = false;
 			showFeedbackMsg('Microscope stopped', 'success');
@@ -138,29 +151,93 @@
 	
 	// Stop WebSocket stream
 	function stopWebSocketStream() {
-		if (wsClient) {
-			wsClient.disconnect();
-			wsClient = null;
-			metrics = null;
-		}
+		if (wsClient) { wsClient.disconnect(); wsClient = null; metrics = null; }
+	}
+
+	// Start WebRTC stream
+	function startWebRtcStream() {
+		if (!videoRef) { showFeedbackMsg('WebRTC: video element not ready', 'error'); return; }
+		if (webrtcRetryTimer) { clearTimeout(webrtcRetryTimer); webrtcRetryTimer = null; }
+
+		const client = new WebRtcStreamClient();
+		client.onStateChange((s) => console.log(`[MicroscopePanel] WebRTC state: ${s}`));
+		client.onError((e) => console.error(`[MicroscopePanel] WebRTC error:`, e));
+
+		const offerUrl = `${roverApi.getApiBaseUrl()}/api/sci/microscope/webrtc/offer`;
+		client.connect(offerUrl, videoRef, 30).then(() => {
+			webrtcRetryCount = 0;
+			startWebRtcStatusPolling();
+		}).catch((err: Error & { status?: number }) => {
+			if (err.status === 429) {
+				showFeedbackMsg('Too many viewers — falling back to MJPEG', 'error');
+				streamingMode = 'mjpeg';
+			} else if (err.status === 400) {
+				showFeedbackMsg('Microscope not started — click Start first', 'error');
+			} else if (err.status === 500 || !err.status) {
+				webrtcRetryCount++;
+				if (webrtcRetryCount <= 5) {
+					const delay = Math.min(5000 * Math.pow(2, webrtcRetryCount - 1), 60000);
+					showFeedbackMsg(`Stream error — retrying in ${delay / 1000}s`, 'error');
+					webrtcRetryTimer = setTimeout(() => {
+						if (microscopeActive && streamingMode === 'webrtc') startWebRtcStream();
+					}, delay);
+				} else {
+					showFeedbackMsg('WebRTC failed — falling back to MJPEG', 'error');
+					streamingMode = 'mjpeg';
+				}
+			} else {
+				showFeedbackMsg(`WebRTC error: ${err.message}`, 'error');
+			}
+			webrtcClient = null;
+		});
+		webrtcClient = client;
+	}
+
+	// Stop WebRTC stream
+	async function stopWebRtcStream() {
+		if (!webrtcClient) return;
+		const deleteUrl = `${roverApi.getApiBaseUrl()}/api/sci/microscope/webrtc`;
+		await webrtcClient.disconnect(deleteUrl);
+		webrtcClient = null;
+		stopWebRtcStatusPolling();
+		webrtcStatus = null;
+	}
+
+	function startWebRtcStatusPolling() {
+		stopWebRtcStatusPolling();
+		webrtcStatusInterval = setInterval(async () => {
+			try {
+				const st = await roverApi.getMicroscopeWebRtcStatus();
+				webrtcStatus = { active_connections: st.active_connections, max_connections: st.max_connections ?? 5 };
+				if (st.active_connections >= (st.max_connections ?? 5) && streamingMode === 'webrtc') {
+					showFeedbackMsg('Full — WebRTC unavailable, switching to MJPEG', 'error');
+					await stopWebRtcStream();
+					streamingMode = 'mjpeg';
+				}
+			} catch { /* ignore */ }
+		}, 5000);
+	}
+
+	function stopWebRtcStatusPolling() {
+		if (webrtcStatusInterval) { clearInterval(webrtcStatusInterval); webrtcStatusInterval = null; }
 	}
 	
-	// Toggle streaming mode
-	function toggleStreamingMode() {
-		const newMode = streamingMode === 'mjpeg' ? 'websocket' : 'mjpeg';
+	// Toggle streaming mode (3-way cycle)
+	async function toggleStreamingMode() {
+		const order: Array<'mjpeg' | 'websocket' | 'webrtc'> = ['mjpeg', 'websocket', 'webrtc'];
+		const next = order[(order.indexOf(streamingMode) + 1) % 3];
 		
-		// If microscope is active, restart with new mode
+		// If microscope is active, stop old stream and start new
 		if (microscopeActive) {
-			if (streamingMode === 'websocket') {
-				stopWebSocketStream();
-			}
-			if (newMode === 'websocket') {
-				startWebSocketStream();
-			}
+			if (streamingMode === 'websocket') stopWebSocketStream();
+			if (streamingMode === 'webrtc') await stopWebRtcStream();
+			streamingMode = next;
+			if (next === 'websocket') startWebSocketStream();
+			if (next === 'webrtc') startWebRtcStream();
+		} else {
+			streamingMode = next;
 		}
-		
-		streamingMode = newMode;
-		showFeedbackMsg(`Switched to ${newMode.toUpperCase()} mode`, 'success');
+		showFeedbackMsg(`Switched to ${next.toUpperCase()} mode`, 'success');
 	}
 	
 	// Capture image
@@ -191,16 +268,33 @@
 	
 	// Get microscope stream URL (MJPEG)
 	function getStreamUrl() {
-		return roverApi.getMicroscopeStreamUrl();
+		return roverApi.getMicroscopeStreamUrl(mjpegFps, mjpegQuality);
 	}
-	
+
+	// Handle MJPEG param change (debounced)
+	function handleMjpegParamChange() {
+		if (mjpegDebounceTimer) clearTimeout(mjpegDebounceTimer);
+		mjpegDebounceTimer = setTimeout(() => {
+			// force reactivity — nothing else needed, getStreamUrl() is called inline
+			mjpegFps = mjpegFps;
+		}, 300);
+	}
+
 	// Cleanup on destroy
 	$effect(() => {
 		return () => {
-			if (microscopeActive) {
-				stopMicroscope();
+			if (microscopeActive) stopMicroscope();
+		};
+	});
+
+	onMount(() => {
+		const handleUnload = () => {
+			if (webrtcClient) {
+				webrtcClient.disconnect(`${roverApi.getApiBaseUrl()}/api/sci/microscope/webrtc`).catch(() => {});
 			}
 		};
+		window.addEventListener('beforeunload', handleUnload);
+		return () => window.removeEventListener('beforeunload', handleUnload);
 	});
 </script>
 
@@ -234,30 +328,25 @@
 		{/if}
 		
 		<!-- Stream Mode Selector -->
-		{#if !microscopeActive}
-		<div class="px-3 py-2 bg-secondary rounded-lg border border-border flex items-center justify-between">
-			<div class="flex items-center gap-2 text-xs text-muted-foreground">
-				{#if streamingMode === 'websocket'}
-				<Wifi class="w-3 h-3 text-sky-500" />
-				<span class="text-sky-500 font-medium">WebSocket</span>
-				<span class="text-muted-foreground">Low Latency</span>
-				{:else}
-				<Activity class="w-3 h-3" />
-				<span>MJPEG</span>
-				<span class="text-muted-foreground">Compatible</span>
-				{/if}
+		<div class="px-3 py-2 bg-secondary rounded-lg border border-border flex items-center justify-between gap-2">
+			<span class="text-xs text-muted-foreground shrink-0">Stream</span>
+			<div class="flex rounded-md border border-border overflow-hidden text-xs">
+				{#each (['mjpeg', 'websocket', 'webrtc'] as const) as m}
+				<button
+					class="px-2 py-1 transition-colors {streamingMode === m ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-accent'}"
+					onclick={() => toggleStreamingMode()}
+					title="{m.toUpperCase()}"
+				>{m === 'mjpeg' ? 'MJPEG' : m === 'websocket' ? 'WS' : 'WebRTC'}</button>
+				{/each}
 			</div>
-			<Button 
-				variant="ghost"
-				size="sm"
-				onclick={toggleStreamingMode}
-				class="h-6 text-xs"
-			>
-				Switch
-			</Button>
+			{#if streamingMode === 'webrtc' && webrtcStatus}
+			<span class="text-xs {webrtcStatus.active_connections >= webrtcStatus.max_connections ? 'text-destructive' : 'text-green-500'}">
+				{webrtcStatus.active_connections}/{webrtcStatus.max_connections}
+				{webrtcStatus.active_connections >= webrtcStatus.max_connections ? '(Full)' : 'connected'}
+			</span>
+			{/if}
 		</div>
-		{/if}
-		
+
 		<!-- Performance Metrics (WebSocket only) -->
 		{#if microscopeActive && streamingMode === 'websocket' && metrics}
 		<div class="px-3 py-1.5 bg-black/30 border border-border rounded-lg flex items-center justify-between text-xs font-mono">
@@ -273,7 +362,25 @@
 			{/if}
 		</div>
 		{/if}
-		
+
+		<!-- MJPEG Sliders -->
+		{#if microscopeActive && streamingMode === 'mjpeg'}
+		<div class="px-3 py-2 bg-secondary rounded-lg border border-border space-y-2 text-xs">
+			<div class="flex items-center gap-2">
+				<span class="text-muted-foreground w-14 shrink-0">FPS</span>
+				<input type="range" min="1" max="60" step="1" bind:value={mjpegFps}
+					oninput={handleMjpegParamChange} class="flex-1 accent-primary" />
+				<span class="w-8 text-right">{mjpegFps}</span>
+			</div>
+			<div class="flex items-center gap-2">
+				<span class="text-muted-foreground w-14 shrink-0">Quality</span>
+				<input type="range" min="10" max="100" step="5" bind:value={mjpegQuality}
+					oninput={handleMjpegParamChange} class="flex-1 accent-primary" />
+				<span class="w-8 text-right">{mjpegQuality}</span>
+			</div>
+		</div>
+		{/if}
+
 		<!-- Video Display -->
 		<div class="relative bg-black rounded-lg overflow-hidden" style="aspect-ratio: 4/3;">
 			{#if microscopeActive}
@@ -289,9 +396,22 @@
 					<Wifi class="w-3 h-3" />
 					LIVE WS
 				</div>
+				{:else if streamingMode === 'webrtc'}
+				<!-- WebRTC Video -->
+				<video
+					bind:this={videoRef}
+					autoplay
+					playsinline
+					muted
+					class="w-full h-full object-contain"
+				></video>
+				<div class="absolute top-2 left-2 bg-green-600 text-white text-xs px-2 py-1 rounded font-mono flex items-center gap-1">
+					<Radio class="w-3 h-3" />
+					LIVE WebRTC
+				</div>
 				{:else}
 				<!-- MJPEG Image -->
-				<img 
+				<img
 					src={getStreamUrl()}
 					alt="Microscope Stream"
 					class="w-full h-full object-contain"

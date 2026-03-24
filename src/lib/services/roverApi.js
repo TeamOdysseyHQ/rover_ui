@@ -171,6 +171,24 @@ export async function listReports() {
 }
 
 // ============================================
+// MOTOR RPM ENDPOINTS (/api/nav/ros/motor_rpms)
+// ============================================
+
+/**
+ * Subscribe to motor RPM topic (call once on page load)
+ */
+export async function subscribeMotorRpms() {
+    return apiRequest('/api/nav/ros/motor_rpms/subscribe', { method: 'POST' });
+}
+
+/**
+ * Get latest motor RPM data
+ */
+export async function getMotorRpms() {
+    return apiRequest('/api/nav/ros/motor_rpms', { method: 'GET' });
+}
+
+// ============================================
 // DIAGNOSTICS ENDPOINTS (/api/dgt/)
 // ============================================
 
@@ -576,8 +594,148 @@ export async function captureCameraImage(cameraName, telemetry = {}, expeditionI
 /**
  * Get camera stream URL (MJPEG)
  */
-export function getCameraStreamUrl(cameraName) {
-    return `${API_BASE_URL}/api/nav/cameras/${cameraName}/stream`;
+export function getCameraStreamUrl(cameraName, fps = 30, quality = 80) {
+    return `${API_BASE_URL}/api/nav/cameras/${cameraName}/stream?fps=${fps}&quality=${quality}`;
+}
+
+/**
+ * Get camera WebRTC offer URL
+ */
+export function getCameraWebRtcOfferUrl(cameraName) {
+    return `${API_BASE_URL}/api/nav/cameras/${cameraName}/webrtc/offer`;
+}
+
+/**
+ * Get camera WebRTC delete URL
+ */
+export function getCameraWebRtcDeleteUrl(cameraName) {
+    return `${API_BASE_URL}/api/nav/cameras/${cameraName}/webrtc`;
+}
+
+/**
+ * Send WebRTC offer for a hardware camera
+ */
+export async function sendCameraWebRtcOffer(cameraName, sdp, type, fps = 30) {
+    const url = `${API_BASE_URL}/api/nav/cameras/${cameraName}/webrtc/offer`;
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sdp, type, fps })
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        const error = new Error(err.detail || `HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+    }
+    return response.json();
+}
+
+/**
+ * Close all WebRTC connections for a hardware camera
+ */
+export async function stopCameraWebRtc(cameraName) {
+    const url = `${API_BASE_URL}/api/nav/cameras/${cameraName}/webrtc`;
+    const response = await fetch(url, { method: 'DELETE' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+}
+
+/**
+ * Get WebRTC status for a specific hardware camera
+ */
+export async function getCameraWebRtcStatus(cameraName) {
+    return apiRequest(`/api/nav/cameras/${cameraName}/webrtc/status`, { method: 'GET' });
+}
+
+/**
+ * Get WebRTC status for all hardware cameras
+ */
+export async function getAllCamerasWebRtcStatus() {
+    return apiRequest('/api/nav/cameras/webrtc/status', { method: 'GET' });
+}
+
+/**
+ * Send WebRTC offer for the ROS camera
+ */
+export async function sendRosCameraWebRtcOffer(sdp, type, fps = 30, topicName = null) {
+    const url = `${API_BASE_URL}/api/nav/ros/camera/webrtc/offer`;
+    const body = { sdp, type, fps };
+    if (topicName) body.topic_name = topicName;
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        const error = new Error(err.detail || `HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+    }
+    return response.json();
+}
+
+/**
+ * Close all WebRTC connections for the ROS camera
+ */
+export async function stopRosCameraWebRtc() {
+    const url = `${API_BASE_URL}/api/nav/ros/camera/webrtc`;
+    const response = await fetch(url, { method: 'DELETE' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+}
+
+/**
+ * Get WebRTC status for the ROS camera
+ */
+export async function getRosCameraWebRtcStatus() {
+    return apiRequest('/api/nav/ros/camera/webrtc/status', { method: 'GET' });
+}
+
+/**
+ * Get ROS camera WebSocket stream URL
+ */
+export function getRosCameraWebSocketUrl(quality = 85, fps = 30) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = API_BASE_URL.replace(/^https?:\/\//, '');
+    return `${protocol}//${host}/api/nav/ros/camera/ws?quality=${quality}&fps=${fps}`;
+}
+
+/**
+ * Send WebRTC offer for the science microscope
+ */
+export async function sendMicroscopeWebRtcOffer(sdp, type, fps = 30) {
+    const url = `${API_BASE_URL}/api/sci/microscope/webrtc/offer`;
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sdp, type, fps })
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        const error = new Error(err.detail || `HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+    }
+    return response.json();
+}
+
+/**
+ * Close all WebRTC connections for the microscope
+ */
+export async function stopMicroscopeWebRtc() {
+    const url = `${API_BASE_URL}/api/sci/microscope/webrtc`;
+    const response = await fetch(url, { method: 'DELETE' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+}
+
+/**
+ * Get WebRTC status for the microscope
+ */
+export async function getMicroscopeWebRtcStatus() {
+    return apiRequest('/api/sci/microscope/webrtc/status', { method: 'GET' });
 }
 
 /**
@@ -655,8 +813,8 @@ export async function getMicroscopeStatus() {
 /**
  * Get microscope MJPEG stream URL
  */
-export function getMicroscopeStreamUrl() {
-    return `${API_BASE_URL}/api/sci/microscope/stream`;
+export function getMicroscopeStreamUrl(fps = 30, quality = 80) {
+    return `${API_BASE_URL}/api/sci/microscope/stream?fps=${fps}&quality=${quality}`;
 }
 
 /**
@@ -804,9 +962,12 @@ export async function getLatestRosCameraImage(topicName = null) {
 /**
  * Get ROS camera MJPEG stream URL
  */
-export function getRosCameraStreamUrl(topicName = null) {
-    const params = topicName ? `?topic_name=${topicName}` : '';
-    return `${API_BASE_URL}/api/nav/ros/camera/stream${params}`;
+export function getRosCameraStreamUrl(topicName = null, fps = 30, quality = 80) {
+    const params = new URLSearchParams();
+    if (topicName) params.set('topic_name', topicName);
+    params.set('fps', fps.toString());
+    params.set('quality', quality.toString());
+    return `${API_BASE_URL}/api/nav/ros/camera/stream?${params.toString()}`;
 }
 
 /**

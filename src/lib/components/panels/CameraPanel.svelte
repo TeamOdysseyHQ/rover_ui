@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { Camera, Power, PowerOff, Image as ImageIcon, RefreshCw, AlertCircle, Wifi, WifiOff, Activity } from 'lucide-svelte';
+	import { Camera, Power, PowerOff, Image as ImageIcon, RefreshCw, AlertCircle, Wifi, WifiOff, Activity, Radio } from 'lucide-svelte';
 	import { apiStatus } from '$lib/stores/apiStore';
 	import { expeditionStore, currentExpeditionId, isExpeditionActive } from '$lib/stores/expeditionStore';
 	import * as roverApi from '$lib/services/roverApi';
-	import { VideoStreamClient, type StreamMetrics } from '$lib/services/videoStreamService';
+	import { VideoStreamClient, WebRtcStreamClient, type StreamMetrics } from '$lib/services/videoStreamService';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
@@ -18,17 +18,37 @@
 	let feedbackType = $state<'success' | 'error'>('success');
 	let showFeedback = $state(false);
 	
-	// Streaming mode per camera: 'mjpeg' or 'websocket'
-	let streamingModes = $state<Map<string, 'mjpeg' | 'websocket'>>(new Map());
+	// Streaming mode per camera: 'mjpeg' | 'websocket' | 'webrtc'
+	let streamingModes = $state<Map<string, 'mjpeg' | 'websocket' | 'webrtc'>>(new Map());
 	
 	// WebSocket clients per camera
 	let wsClients = $state<Map<string, VideoStreamClient>>(new Map());
 	
+	// WebRTC clients per camera
+	let webrtcClients = $state<Map<string, WebRtcStreamClient>>(new Map());
+	
+	// WebRTC connection status per camera {active_connections, max_connections}
+	let webrtcStatuses = $state<Map<string, { active_connections: number; max_connections: number }>>(new Map());
+	
+	// Polling intervals for WebRTC status
+	let webrtcStatusIntervals = new Map<string, ReturnType<typeof setInterval>>();
+	
+	// Retry timers for 500 errors
+	let webrtcRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	let webrtcRetryCounts = new Map<string, number>();
+	
+	// MJPEG fps/quality per camera
+	let mjpegParams = $state<Map<string, { fps: number; quality: number }>>(new Map());
+	// Debounce timers for MJPEG param changes
+	let mjpegDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	
 	// Stream metrics per camera
 	let streamMetrics = $state<Map<string, StreamMetrics>>(new Map());
 	
-	// Canvas refs per camera
+	// Canvas refs per camera (WebSocket)
 	let canvasRefs: Record<string, HTMLCanvasElement | undefined> = $state({});
+	// Video refs per camera (WebRTC)
+	let videoRefs: Record<string, HTMLVideoElement | undefined> = $state({});
 	
 	// Resolution state per camera
 	let supportedResolutions = $state<Map<string, Array<{width: number, height: number}>>>(new Map());
@@ -65,13 +85,17 @@
 			cameras = result.cameras || [];
 			showFeedbackMsg(`Found ${cameras.length} camera(s)`, 'success');
 			
-			// Initialize streaming mode for each camera (default to WebSocket)
+			// Initialize streaming mode for each camera (default to WebRTC)
 			cameras.forEach(cam => {
 				if (!streamingModes.has(cam.name)) {
-					streamingModes.set(cam.name, 'websocket');
+					streamingModes.set(cam.name, 'webrtc');
+				}
+				if (!mjpegParams.has(cam.name)) {
+					mjpegParams.set(cam.name, { fps: 30, quality: 80 });
 				}
 			});
 			streamingModes = new Map(streamingModes);
+			mjpegParams = new Map(mjpegParams);
 			
 			// Fetch supported resolutions for each camera
 			await fetchAllResolutions();
@@ -136,12 +160,11 @@
 			activeCameras = new Set(activeCameras);
 			
 			// Start streaming based on mode
-			const mode = streamingModes.get(cameraName) || 'websocket';
+			const mode = streamingModes.get(cameraName) || 'webrtc';
 			if (mode === 'websocket') {
-				// Wait for canvas to be rendered before connecting WebSocket
-				setTimeout(() => {
-					startWebSocketStream(cameraName);
-				}, 100);
+				setTimeout(() => startWebSocketStream(cameraName), 100);
+			} else if (mode === 'webrtc') {
+				setTimeout(() => startWebRtcStream(cameraName), 100);
 			}
 			
 			showFeedbackMsg(`Camera '${cameraName}' started at ${resolution.width}x${resolution.height} (${mode.toUpperCase()})`, 'success');
@@ -153,8 +176,8 @@
 	// Stop a camera
 	async function stopCamera(cameraName: string) {
 		try {
-			// Stop WebSocket if active
 			stopWebSocketStream(cameraName);
+			await stopWebRtcStream(cameraName);
 			
 			await roverApi.stopCamera(cameraName);
 			activeCameras.delete(cameraName);
@@ -226,24 +249,136 @@
 		}
 	}
 	
-	// Toggle streaming mode
-	function toggleStreamingMode(cameraName: string) {
-		const currentMode = streamingModes.get(cameraName) || 'websocket';
-		const newMode = currentMode === 'mjpeg' ? 'websocket' : 'mjpeg';
+	// Set streaming mode (3-way: mjpeg → websocket → webrtc → mjpeg)
+	async function setStreamingMode(cameraName: string, newMode: 'mjpeg' | 'websocket' | 'webrtc') {
+		const currentMode = streamingModes.get(cameraName) || 'webrtc';
+		if (currentMode === newMode) return;
 		
-		// If camera is active, restart with new mode
+		// Stop the current stream if camera is active
 		if (activeCameras.has(cameraName)) {
-			if (currentMode === 'websocket') {
-				stopWebSocketStream(cameraName);
-			}
-			if (newMode === 'websocket') {
-				startWebSocketStream(cameraName);
-			}
+			if (currentMode === 'websocket') stopWebSocketStream(cameraName);
+			if (currentMode === 'webrtc') await stopWebRtcStream(cameraName);
 		}
 		
 		streamingModes.set(cameraName, newMode);
 		streamingModes = new Map(streamingModes);
+		
+		// Start new stream if camera is active
+		if (activeCameras.has(cameraName)) {
+			if (newMode === 'websocket') setTimeout(() => startWebSocketStream(cameraName), 50);
+			if (newMode === 'webrtc') setTimeout(() => startWebRtcStream(cameraName), 50);
+		}
+		
 		showFeedbackMsg(`Switched to ${newMode.toUpperCase()} mode`, 'success');
+	}
+
+	// Start WebRTC stream for a camera
+	function startWebRtcStream(cameraName: string) {
+		const videoEl = videoRefs[cameraName];
+		if (!videoEl) {
+			showFeedbackMsg(`WebRTC: video element not ready for '${cameraName}'`, 'error');
+			return;
+		}
+
+		// Clear any previous retry timer
+		const existing = webrtcRetryTimers.get(cameraName);
+		if (existing) { clearTimeout(existing); webrtcRetryTimers.delete(cameraName); }
+
+		const client = new WebRtcStreamClient();
+
+		client.onStateChange((s) => {
+			console.log(`[CameraPanel] WebRTC '${cameraName}' state: ${s}`);
+		});
+
+		client.onError((err) => {
+			console.error(`[CameraPanel] WebRTC error for '${cameraName}':`, err);
+		});
+
+		const offerUrl = roverApi.getCameraWebRtcOfferUrl(cameraName);
+		client.connect(offerUrl, videoEl, 30).then(() => {
+			webrtcRetryCounts.delete(cameraName);
+			startWebRtcStatusPolling(cameraName);
+		}).catch((err: Error & { status?: number }) => {
+			if (err.status === 429) {
+				// Capacity full — fall back to MJPEG
+				showFeedbackMsg(`Too many WebRTC viewers — falling back to MJPEG for '${cameraName}'`, 'error');
+				streamingModes.set(cameraName, 'mjpeg');
+				streamingModes = new Map(streamingModes);
+			} else if (err.status === 500 || !err.status) {
+				// Retry with exponential backoff
+				const retries = (webrtcRetryCounts.get(cameraName) ?? 0) + 1;
+				webrtcRetryCounts.set(cameraName, retries);
+				if (retries <= 5) {
+					const delay = Math.min(5000 * Math.pow(2, retries - 1), 60000);
+					showFeedbackMsg(`Stream error — retrying '${cameraName}' in ${delay / 1000}s`, 'error');
+					webrtcRetryTimers.set(cameraName, setTimeout(() => {
+						if (activeCameras.has(cameraName) && streamingModes.get(cameraName) === 'webrtc') {
+							startWebRtcStream(cameraName);
+						}
+					}, delay));
+				} else {
+					showFeedbackMsg(`WebRTC failed for '${cameraName}' — falling back to MJPEG`, 'error');
+					streamingModes.set(cameraName, 'mjpeg');
+					streamingModes = new Map(streamingModes);
+				}
+			} else {
+				showFeedbackMsg(`WebRTC error for '${cameraName}': ${err.message}`, 'error');
+			}
+		});
+
+		webrtcClients.set(cameraName, client);
+		webrtcClients = new Map(webrtcClients);
+	}
+
+	// Stop WebRTC stream for a camera
+	async function stopWebRtcStream(cameraName: string) {
+		const client = webrtcClients.get(cameraName);
+		if (!client) return;
+		const deleteUrl = roverApi.getCameraWebRtcDeleteUrl(cameraName);
+		await client.disconnect(deleteUrl);
+		webrtcClients.delete(cameraName);
+		webrtcClients = new Map(webrtcClients);
+		stopWebRtcStatusPolling(cameraName);
+		webrtcStatuses.delete(cameraName);
+		webrtcStatuses = new Map(webrtcStatuses);
+	}
+
+	// Start polling WebRTC connection status badge every 5 s
+	function startWebRtcStatusPolling(cameraName: string) {
+		stopWebRtcStatusPolling(cameraName);
+		const id = setInterval(async () => {
+			try {
+				const st = await roverApi.getCameraWebRtcStatus(cameraName);
+				webrtcStatuses.set(cameraName, { active_connections: st.active_connections, max_connections: st.max_connections ?? 5 });
+				webrtcStatuses = new Map(webrtcStatuses);
+				// If full and we're in webrtc mode, fall back
+				if (st.active_connections >= (st.max_connections ?? 5) && streamingModes.get(cameraName) === 'webrtc') {
+					showFeedbackMsg(`Full — WebRTC unavailable for '${cameraName}', switching to MJPEG`, 'error');
+					await setStreamingMode(cameraName, 'mjpeg');
+				}
+			} catch { /* ignore polling errors */ }
+		}, 5000);
+		webrtcStatusIntervals.set(cameraName, id);
+	}
+
+	function stopWebRtcStatusPolling(cameraName: string) {
+		const id = webrtcStatusIntervals.get(cameraName);
+		if (id !== undefined) { clearInterval(id); webrtcStatusIntervals.delete(cameraName); }
+	}
+
+	// Handle MJPEG fps/quality slider change (debounced 300 ms)
+	function handleMjpegParamChange(cameraName: string, param: 'fps' | 'quality', value: number) {
+		const params = mjpegParams.get(cameraName) ?? { fps: 30, quality: 80 };
+		params[param] = value;
+		mjpegParams.set(cameraName, params);
+		mjpegParams = new Map(mjpegParams);
+		
+		const existing = mjpegDebounceTimers.get(cameraName);
+		if (existing) clearTimeout(existing);
+		mjpegDebounceTimers.set(cameraName, setTimeout(() => {
+			// Force reactivity update so <img> src re-evaluates
+			mjpegParams = new Map(mjpegParams);
+		}, 300));
 	}
 	
 	// Handle resolution change
@@ -298,11 +433,22 @@
 	async function stopAllCameras() {
 		try {
 			// Stop all WebSocket streams
-			wsClients.forEach((client, index) => {
-				client.disconnect();
-			});
+			wsClients.forEach((client) => client.disconnect());
 			wsClients.clear();
 			wsClients = new Map(wsClients);
+			
+			// Stop all WebRTC streams
+			const rtcStops = Array.from(webrtcClients.entries()).map(([name, client]) => {
+				const deleteUrl = roverApi.getCameraWebRtcDeleteUrl(name);
+				return client.disconnect(deleteUrl).catch(() => {});
+			});
+			await Promise.allSettled(rtcStops);
+			webrtcClients.clear();
+			webrtcClients = new Map(webrtcClients);
+			webrtcStatusIntervals.forEach((id) => clearInterval(id));
+			webrtcStatusIntervals.clear();
+			webrtcRetryTimers.forEach((id) => clearTimeout(id));
+			webrtcRetryTimers.clear();
 			
 			await roverApi.stopAllCameras();
 			activeCameras.clear();
@@ -313,9 +459,10 @@
 		}
 	}
 	
-	// Get camera stream URL (MJPEG)
+	// Get camera stream URL (MJPEG) with current fps/quality params
 	function getStreamUrl(cameraName: string) {
-		return roverApi.getCameraStreamUrl(cameraName);
+		const params = mjpegParams.get(cameraName) ?? { fps: 30, quality: 80 };
+		return roverApi.getCameraStreamUrl(cameraName, params.fps, params.quality);
 	}
 	
 	// Get metrics for camera
@@ -335,6 +482,17 @@
 				stopAllCameras();
 			}
 		};
+	});
+
+	// Ensure WebRTC peers are released on page unload
+	onMount(() => {
+		const handleUnload = () => {
+			webrtcClients.forEach((client, name) => {
+				client.disconnect(roverApi.getCameraWebRtcDeleteUrl(name)).catch(() => {});
+			});
+		};
+		window.addEventListener('beforeunload', handleUnload);
+		return () => window.removeEventListener('beforeunload', handleUnload);
 	});
 </script>
 
@@ -407,8 +565,9 @@
 			{:else}
 			<div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
 				{#each cameras.filter(cam => cam.name !== 'microscope') as camera}
-				{@const mode = streamingModes.get(camera.name) || 'websocket'}
-				{@const metrics = getMetrics(camera.name)}
+			{@const mode = streamingModes.get(camera.name) || 'webrtc'}
+			{@const metrics = getMetrics(camera.name)}
+			{@const webrtcStatus = webrtcStatuses.get(camera.name)}
 				{@const isNamedCamera = camera.is_named !== false}
 				<div class="bg-secondary rounded-lg border border-border overflow-hidden">
 					<!-- Camera Header -->
@@ -439,29 +598,31 @@
 					</div>
 					
 					<!-- Stream Mode Selector -->
-					<div class="px-3 py-2 bg-card/50 border-b border-border flex items-center justify-between">
-						<div class="flex items-center gap-2 text-xs text-muted-foreground">
-							{#if mode === 'websocket'}
-							<Wifi class="w-3 h-3 text-sky-500" />
-							<span class="text-sky-500 font-medium">WebSocket</span>
-							<span class="text-muted-foreground">Low Latency</span>
-							{:else}
-							<Activity class="w-3 h-3" />
-							<span>MJPEG</span>
-							<span class="text-muted-foreground">Compatible</span>
-							{/if}
+					<div class="px-3 py-2 bg-card/50 border-b border-border flex items-center justify-between gap-2">
+						<span class="text-xs text-muted-foreground">Mode</span>
+						<div class="flex rounded-md overflow-hidden border border-border text-xs">
+							<button
+								onclick={() => setStreamingMode(camera.name, 'mjpeg')}
+								class="px-2 py-1 transition-colors {mode === 'mjpeg' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:bg-secondary/80'}"
+							>MJPEG</button>
+							<button
+								onclick={() => setStreamingMode(camera.name, 'websocket')}
+								class="px-2 py-1 border-l border-border transition-colors {mode === 'websocket' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:bg-secondary/80'}"
+							>WebSocket</button>
+							<button
+								onclick={() => setStreamingMode(camera.name, 'webrtc')}
+								class="px-2 py-1 border-l border-border transition-colors {mode === 'webrtc' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:bg-secondary/80'}"
+							>WebRTC</button>
 						</div>
-						<Button 
-							variant="ghost"
-							size="sm"
-							onclick={() => toggleStreamingMode(camera.name)}
-							disabled={activeCameras.has(camera.name)}
-							class="h-6 text-xs"
-						>
-							Switch
-						</Button>
+						{#if mode === 'webrtc' && webrtcStatus}
+							{#if webrtcStatus.active_connections >= webrtcStatus.max_connections}
+								<Badge variant="destructive" class="text-xs">Full — WebRTC unavailable</Badge>
+							{:else}
+								<Badge variant="secondary" class="text-xs">{webrtcStatus.active_connections}/{webrtcStatus.max_connections} connected</Badge>
+							{/if}
+						{/if}
 					</div>
-					
+
 					<!-- Resolution Selector -->
 					<div class="px-3 py-2 bg-card/50 border-b border-border flex items-center justify-between">
 						<label for={`resolution-${camera.name}`} class="text-xs text-muted-foreground">
@@ -494,7 +655,7 @@
 							{/if}
 						</select>
 					</div>
-					
+
 					<!-- Performance Metrics (WebSocket only) -->
 					{#if activeCameras.has(camera.name) && mode === 'websocket' && metrics}
 					<div class="px-3 py-1.5 bg-black/30 border-b border-border flex items-center justify-between text-xs font-mono">
@@ -510,7 +671,26 @@
 						{/if}
 					</div>
 					{/if}
-					
+
+					<!-- MJPEG FPS / Quality sliders -->
+					{#if mode === 'mjpeg'}
+					{@const mparams = mjpegParams.get(camera.name) ?? { fps: 30, quality: 80 }}
+					<div class="px-3 py-2 bg-card/50 border-b border-border space-y-1.5">
+						<div class="flex items-center gap-2 text-xs">
+							<span class="text-muted-foreground w-16">FPS: <span class="text-foreground">{mparams.fps}</span></span>
+							<input type="range" min="1" max="60" value={mparams.fps}
+								class="flex-1 h-1 accent-primary"
+								oninput={(e) => handleMjpegParamChange(camera.name, 'fps', Number(e.currentTarget.value))} />
+						</div>
+						<div class="flex items-center gap-2 text-xs">
+							<span class="text-muted-foreground w-16">Quality: <span class="text-foreground">{mparams.quality}</span></span>
+							<input type="range" min="10" max="100" value={mparams.quality}
+								class="flex-1 h-1 accent-primary"
+								oninput={(e) => handleMjpegParamChange(camera.name, 'quality', Number(e.currentTarget.value))} />
+						</div>
+					</div>
+					{/if}
+
 					<!-- Camera Stream or Placeholder -->
 					<div class="relative bg-black aspect-video">
 						{#if activeCameras.has(camera.name)}
@@ -527,9 +707,22 @@
 								<Wifi class="w-3 h-3" />
 								LIVE WS
 							</div>
+							{:else if mode === 'webrtc'}
+							<!-- WebRTC Video -->
+							<video
+								bind:this={videoRefs[camera.name]}
+								autoplay
+								playsinline
+								muted
+								class="w-full h-full object-contain"
+							></video>
+							<div class="absolute top-2 left-2 bg-green-600 text-white text-xs px-2 py-1 rounded font-mono flex items-center gap-1">
+								<Radio class="w-3 h-3" />
+								LIVE WebRTC
+							</div>
 							{:else}
 							<!-- MJPEG Image -->
-							<img 
+							<img
 								src={getStreamUrl(camera.name)}
 								alt="{camera.name} Stream"
 								class="w-full h-full object-contain"
