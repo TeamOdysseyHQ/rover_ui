@@ -1,2 +1,3 @@
-/node_modules/
-/.svelte_kit/
+node_modules
+.svelte-kit
+
