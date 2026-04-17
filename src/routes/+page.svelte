@@ -1,10 +1,12 @@
 <script lang="ts">
 	import * as roverApi from '$lib/services/roverApi';
+	import { isFullscreen } from '$lib/stores/fullscreenStore';
 	
 	// Panels
     import AndroidPanel from '$lib/components/panels/AndroidSensorPanel.svelte';
     import ROSCameraPanel from '$lib/components/panels/RosCameraPanel.svelte';
 	import CameraPanel from '$lib/components/panels/CameraPanel.svelte';
+	import FullscreenCameraView from '$lib/components/panels/FullscreenCameraView.svelte';
 	import ConnectionPanel from '$lib/components/panels/ConnectionPanel.svelte';
 	import CommandLog from '$lib/components/panels/CommandLog.svelte';
 	import RosStatusPanel from '$lib/components/panels/RosStatusPanel.svelte';
@@ -98,6 +100,19 @@
 
 		<!-- Camera Section (Full Width) -->
 		<section class="mb-6">
+			<div class="flex items-center justify-between mb-2">
+				<span class="text-xs font-semibold tracking-widest uppercase text-slate-400">Camera Feed</span>
+				<button
+					class="fullscreen-trigger"
+					onclick={() => {
+						isFullscreen.set(true);
+					}}
+					aria-label="Enter fullscreen camera view"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+					Fullscreen
+				</button>
+			</div>
 			<CameraPanel />
 		</section>
 
@@ -140,6 +155,11 @@
 		</main>
 	</div>
 </div>
+
+<!-- Fullscreen Camera HUD -->
+{#if $isFullscreen}
+	<FullscreenCameraView />
+{/if}
 
 <!-- Modals -->
 <AutonomousModeModal 
@@ -197,6 +217,28 @@
 		background-color: var(--sky-blue);
 		color: white;
 		border-color: var(--sky-blue);
+	}
+
+	.fullscreen-trigger {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		padding: 4px 12px;
+		border-radius: 6px;
+		font-size: 0.72rem;
+		font-weight: 500;
+		letter-spacing: 0.04em;
+		color: rgba(148, 163, 184, 0.8);
+		background: rgba(30, 41, 59, 0.7);
+		border: 1px solid rgba(51, 65, 85, 0.6);
+		cursor: pointer;
+		transition: background 0.15s, color 0.15s, border-color 0.15s;
+	}
+
+	.fullscreen-trigger:hover {
+		background: rgba(14, 165, 233, 0.15);
+		color: #0ea5e9;
+		border-color: rgba(14, 165, 233, 0.4);
 	}
 
 	:global(.btn-primary:hover) {

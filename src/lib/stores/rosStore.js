@@ -1,6 +1,9 @@
 import { writable, derived } from 'svelte/store';
 import * as api from '$lib/services/roverApi.js';
 
+// Commanded velocity (set by DrivingControls on every command dispatch)
+export const commandedVelocity = writable({ linear: 0, angular: 0 });
+
 // ROS connection status
 export const rosStatus = writable({
 	status: 'disconnected',
@@ -86,6 +89,7 @@ export async function stopRover() {
 // Publish command velocity to ROS
 export async function publishCmdVel(linearX, angularZ) {
 	try {
+		commandedVelocity.set({ linear: linearX, angular: angularZ });
 		const velocityCommand = {
 			linear_x: linearX,
 			linear_y: 0.0,

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Bot, ArrowUp, ArrowDown, RotateCcw, RotateCw, Move, Square, Cpu, Wifi } from 'lucide-svelte';
-	import { isRosConnected, publishCmdVel, stopRover } from '$lib/stores/rosStore';
+	import { isRosConnected, publishCmdVel, stopRover, commandedVelocity } from '$lib/stores/rosStore';
 	import { logCommand } from '$lib/stores/apiStore';
 	import { Button } from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
@@ -120,6 +120,9 @@
 			angularVelocity = quantizeVelocity(angularVelocity + direction * velocityStep);
 		}
 		updateMovementDescription();
+		// Always keep the store in sync so the fullscreen HUD reflects live values
+		// regardless of whether ROS is connected.
+		commandedVelocity.set({ linear: linearVelocity, angular: angularVelocity });
 	}
 	
 	// Arduino mode: Check connection status periodically
@@ -152,6 +155,12 @@
 			const command = `${direction}:${speedValue}`;
 			await sendArduinoCommand(command);
 			logCommand({ type: 'ARDUINO_SPEED', data: { direction, speed: speedValue } }, 'sent');
+			
+			// Mirror to commanded velocity store
+			const normalised = speedValue / 255;
+			const linMap: Record<string, number> = { w: normalised, s: -normalised, a: 0, d: 0 };
+			const angMap: Record<string, number> = { w: 0, s: 0, a: normalised, d: -normalised };
+			commandedVelocity.set({ linear: linMap[direction] ?? 0, angular: angMap[direction] ?? 0 });
 			
 			// Update movement description
 			const descriptions: Record<string, string> = {
@@ -393,6 +402,7 @@
 			publishCmdVel(0, 0);
 			logCommand({ type: 'WASD_STOP' }, 'sent');
 		}
+		commandedVelocity.set({ linear: 0, angular: 0 });
 	}
 	
 	// Legacy stopMovement for compatibility (calls stopRosMovement)
