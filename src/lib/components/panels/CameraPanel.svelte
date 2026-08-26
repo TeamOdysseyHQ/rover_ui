@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Camera, Power, PowerOff, Image as ImageIcon, RefreshCw, AlertCircle, Wifi, WifiOff, Activity, Radio } from 'lucide-svelte';
+	import { Camera, Power, PowerOff, Image as ImageIcon, RefreshCw, AlertCircle, Wifi, WifiOff, Activity, Radio } from '@lucide/svelte';
 	import { apiStatus } from '$lib/stores/apiStore';
 	import { expeditionStore, currentExpeditionId, isExpeditionActive } from '$lib/stores/expeditionStore';
 	import * as roverApi from '$lib/services/roverApi';

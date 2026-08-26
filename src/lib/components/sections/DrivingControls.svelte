@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Bot, ArrowUp, ArrowDown, RotateCcw, RotateCw, Move, Square, Cpu, Wifi } from 'lucide-svelte';
+	import { Bot, ArrowUp, ArrowDown, RotateCcw, RotateCw, Move, Square, Cpu, Wifi } from '@lucide/svelte';
 	import { isRosConnected, publishCmdVel, stopRover, commandedVelocity } from '$lib/stores/rosStore';
 	import { logCommand } from '$lib/stores/apiStore';
 	import { Button } from '$lib/components/ui/button';

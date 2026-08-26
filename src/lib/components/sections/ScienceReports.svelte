@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { FileText, Download, Loader2, Trash2, AlertCircle, PlayCircle, StopCircle, Camera } from 'lucide-svelte';
+	import { FileText, Download, Loader2, Trash2, AlertCircle, PlayCircle, StopCircle, Camera } from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';

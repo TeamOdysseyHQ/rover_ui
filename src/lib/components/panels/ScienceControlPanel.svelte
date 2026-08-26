@@ -14,7 +14,7 @@
 		Grip,
 		Activity,
 		AlertTriangle
-	} from 'lucide-svelte';
+	} from '@lucide/svelte';
 	import {
 		enableScienceMode,
 		sendLinearActuatorCmd,

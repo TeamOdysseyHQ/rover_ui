@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { commandHistory } from '$lib/stores/apiStore';
-	import { Terminal } from 'lucide-svelte';
+	import { Terminal } from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card';
 	import { Badge } from '$lib/components/ui/badge';
 	

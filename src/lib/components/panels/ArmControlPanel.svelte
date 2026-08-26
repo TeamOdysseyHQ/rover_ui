@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Activity, AlertCircle, Archive, Download, StopCircle, Target, TrendingUp } from 'lucide-svelte';
+	import { Activity, AlertCircle, Archive, Download, StopCircle, Target, TrendingUp } from '@lucide/svelte';
 	import { 
 		armTelemetry, 
 		armSubscribed, 

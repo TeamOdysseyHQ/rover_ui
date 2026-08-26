@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Route } from 'lucide-svelte';
+	import { Route } from '@lucide/svelte';
 	import { apiStatus } from '$lib/stores/apiStore';
 	import { isRosConnected } from '$lib/stores/rosStore';
 	import * as Card from '$lib/components/ui/card';

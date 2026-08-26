@@ -2,7 +2,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
-	import { Smartphone, Navigation, Compass, Activity, Loader2 } from 'lucide-svelte';
+	import { Smartphone, Navigation, Compass, Activity, Loader2 } from '@lucide/svelte';
 	import {
 		androidSensorData,
 		isAndroidConnected,

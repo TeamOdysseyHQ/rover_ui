@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { X, Wifi, LayoutGrid } from 'lucide-svelte';
+  import { X, Wifi, LayoutGrid } from '@lucide/svelte';
   import { commandedVelocity } from '$lib/stores/rosStore';
   import { isFullscreen, fullscreenLayout, fullscreenSlots } from '$lib/stores/fullscreenStore';
   import { subscribeMotorRpms, getMotorRpms, detectCameras } from '$lib/services/roverApi';

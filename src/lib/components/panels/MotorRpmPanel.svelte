@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
-	import { Activity, RefreshCw, Gauge, Play, Square } from 'lucide-svelte';
+	import { Activity, RefreshCw, Gauge, Play, Square } from '@lucide/svelte';
 	import * as roverApi from '$lib/services/roverApi';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';

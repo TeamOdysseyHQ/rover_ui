@@ -1,5 +1,5 @@
 <script>
-	import { Bot } from 'lucide-svelte';
+	import { Bot } from '@lucide/svelte';
 </script>
 
 <div class="p-8">

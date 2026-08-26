@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Activity, RefreshCw, Trash2, Power } from 'lucide-svelte';
+	import { Activity, RefreshCw, Trash2, Power } from '@lucide/svelte';
 	import { isRosConnected, teensyTopicData, startTeensyTopicUpdates, stopTeensyTopicUpdates } from '$lib/stores/rosStore';
 	import * as roverApi from '$lib/services/roverApi';
 	import * as Card from '$lib/components/ui/card';

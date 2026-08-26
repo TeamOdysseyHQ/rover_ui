@@ -2,7 +2,7 @@
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
-	import { Loader2, RefreshCw, Thermometer, Droplet, Gauge, Mountain, Wind, Beaker, TestTube } from 'lucide-svelte';
+	import { Loader2, RefreshCw, Thermometer, Droplet, Gauge, Mountain, Wind, Beaker, TestTube } from '@lucide/svelte';
 	import { getScienceSensorData } from '$lib/services/roverApi';
 
 	// Props

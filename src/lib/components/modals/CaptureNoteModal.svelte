@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { X, Camera, AlertCircle } from 'lucide-svelte';
+	import { X, Camera, AlertCircle } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import * as Card from '$lib/components/ui/card';
 	import { cn } from '$lib/utils';

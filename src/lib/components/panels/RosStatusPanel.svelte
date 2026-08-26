@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Wifi, WifiOff, RefreshCw, Activity } from 'lucide-svelte';
+	import { Wifi, WifiOff, RefreshCw, Activity } from '@lucide/svelte';
 	import { rosStatus, isRosConnected, checkRosStatus, connectToRos, disconnectFromRos } from '$lib/stores/rosStore';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Wifi, WifiOff, Power } from 'lucide-svelte';
+	import { Wifi, WifiOff, Power } from '@lucide/svelte';
 	import { apiStatus, roverApiUrl, testConnection, disconnectFromRover } from '$lib/stores/apiStore';
 	import { setApiBaseUrl } from '$lib/services/roverApi';
 	import * as Card from '$lib/components/ui/card';

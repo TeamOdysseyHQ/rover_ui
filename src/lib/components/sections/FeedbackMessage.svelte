@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlertCircle, CheckCircle } from 'lucide-svelte';
+	import { AlertCircle, CheckCircle } from '@lucide/svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	
 	// Props using $bindable for two-way binding
