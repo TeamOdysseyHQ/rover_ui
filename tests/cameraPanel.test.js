@@ -10,7 +10,7 @@ const source = readFileSync(new URL('../src/lib/components/panels/CameraPanel.sv
     .replace(/^\s*import\s[\s\S]*?from\s*['"][^'"]+['"];?/gm, '');
 const script = stripTypeScriptTypes(source) + `
 globalThis.harness = {
-    startWebRtcStream, stopWebRtcStream, stopAllCameras, webRtcLabel,
+    startWebRtcStream, stopWebRtcStream, stopAllCameras, webRtcLabel, setOpticalFlow, startWebSocketStream,
     prepare() { activeCameras.add('science'); streamingModes.set('science', 'webrtc'); videoRefs.science = {}; },
     mode(value) { streamingModes.set('science', value); },
     feedback: () => feedbackMessage,
@@ -18,9 +18,9 @@ globalThis.harness = {
 
 function setup() {
     const peers = [], timers = [], mounts = [], flowStarts = [], flowStops = [];
-    let resolveFlow;
+    let resolveFlow, initializationCalls = 0;
     class OpticalFlowService {
-        initialize() { return new Promise(resolve => { resolveFlow = resolve; }); }
+        initialize() { initializationCalls++; return new Promise(resolve => { resolveFlow = resolve; }); }
         start(name, video) { flowStarts.push({ name, video }); }
         stop(name) { flowStops.push(name); }
         stopAll() { flowStops.push('*'); }
@@ -37,7 +37,7 @@ function setup() {
         async disconnect() { this.change('disconnected'); }
     }
     const context = {
-        $state: value => value, $effect() {}, untrack: fn => fn(), onMount: fn => mounts.push(fn), OpticalFlowService, WebRtcStreamClient: Peer, WEBRTC_TARGET_FPS: 24,
+        $state: value => value, $effect() {}, untrack: fn => fn(), pollEvery: () => () => {}, onMount: fn => mounts.push(fn), OpticalFlowService, WebRtcStreamClient: Peer, WEBRTC_TARGET_FPS: 24,
         roverApi: { getCameraWebRtcOfferUrl: () => 'http://mock.invalid/offer', getCameraWebRtcDeleteUrl: () => null, stopAllCameras: async () => {} },
         console: { log() {}, error() {}, warn() {} },
         setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; }, clearTimeout() {},
@@ -45,7 +45,7 @@ function setup() {
     };
     runInNewContext(script, context);
     context.harness.prepare();
-    return { h: context.harness, peers, timers, mounts, flowStarts, flowStops, ready: () => resolveFlow() };
+    return { h: context.harness, peers, timers, mounts, flowStarts, flowStops, ready: () => resolveFlow(), initializationCalls: () => initializationCalls };
 }
 
 test('camera badge is live only with connected transport and received frames', async () => {
@@ -88,10 +88,11 @@ test('retry banner retains the actual negotiation error', async () => {
 test('a camera connected before OpenCV loads starts diagnostics when ready', async () => {
     const { h, peers, mounts, flowStarts, flowStops, ready } = setup();
     const cleanup = mounts[0]();
+    const initializing = h.setOpticalFlow('science', true);
     h.startWebRtcStream('science');
     peers[0].change('connected'); peers[0].resolve(); await Promise.resolve();
     assert.equal(flowStarts.length, 0);
-    ready(); await Promise.resolve();
+    ready(); await initializing;
     assert.equal(flowStarts.length, 1);
     assert.equal(flowStarts[0].name, 'science');
     peers[0].change('error');
@@ -100,13 +101,16 @@ test('a camera connected before OpenCV loads starts diagnostics when ready', asy
 });
 
 test('late initialization cannot start processing after unmount or mode change', async () => {
-    for (const action of ['unmount', 'mode']) {
+    for (const action of ['unmount', 'mode', 'disabled']) {
         const { h, peers, mounts, flowStarts, ready } = setup();
         const cleanup = mounts[0]();
+        const initializing = h.setOpticalFlow('science', true);
         h.startWebRtcStream('science');
         peers[0].change('connected'); peers[0].resolve(); await Promise.resolve();
-        if (action === 'unmount') cleanup(); else h.mode('mjpeg');
-        ready(); await Promise.resolve();
+        if (action === 'unmount') cleanup();
+        else if (action === 'mode') h.mode('mjpeg');
+        else await h.setOpticalFlow('science', false);
+        ready(); await initializing;
         assert.equal(flowStarts.length, 0);
     }
 });
@@ -116,4 +120,16 @@ test('Stop All releases optical flow even while backend shutdown is pending', as
     const stop = h.stopAllCameras();
     assert.deepEqual(flowStops, ['*']);
     await stop;
+});
+
+
+test('ordinary camera use does not load OpenCV or start diagnostics', async () => {
+    const { h, peers, mounts, flowStarts, initializationCalls } = setup();
+    mounts[0]();
+    h.startWebRtcStream('science');
+    peers[0].change('connected'); peers[0].resolve(); await Promise.resolve();
+    assert.equal(initializationCalls(), 0);
+    assert.equal(flowStarts.length, 0);
+    h.mode('mjpeg');
+    assert.doesNotThrow(() => h.startWebSocketStream('science'));
 });

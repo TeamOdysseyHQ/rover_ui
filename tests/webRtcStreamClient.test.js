@@ -202,11 +202,39 @@ test('advertised adaptive backend receives interval feedback; disconnect stops p
     await settle();
     const feedback = calls.find(call => call.url.endsWith('/feedback'));
     assert.equal(JSON.parse(feedback.options.body).received_fps, 30);
-    assert.equal(metrics[0].scale, 0.85);
+    assert.equal(metrics[0].scale, 1, 'FPS is delivered before the feedback response');
+    assert.equal(metrics.at(-1).scale, 0.85);
     assert.equal(metrics[0].targetFps, 60);
     await client.disconnect();
     const count = calls.length;
     t.mock.timers.tick(4000);
     await settle();
     assert.equal(calls.length, count);
+});
+
+
+test('slow feedback cannot block measured FPS delivery', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let feedbackPending = false;
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+        if (url.endsWith('/feedback')) {
+            feedbackPending = true;
+            return new Promise((_, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }));
+        }
+        return { ok: true, json: async () => ({ type: 'answer', sdp: 'answer', peer_id: 'slow', adaptive_quality: true }) };
+    });
+    let n = 0;
+    FakePeer.prototype.getStats = async () => new Map([['video', {
+        id: 'video', type: 'inbound-rtp', kind: 'video', timestamp: n * 2000,
+        framesDecoded: n++ * 48, bytesReceived: n * 1000, packetsReceived: n * 24
+    }]]);
+    t.after(() => delete FakePeer.prototype.getStats);
+    const samples = [];
+    const client = new WebRtcStreamClient(); client.onMetrics(value => samples.push(value));
+    const connecting = client.connect(offerUrl, { srcObject: null });
+    await settle(); peers[0].changeState('connected'); await connecting; await settle();
+    t.mock.timers.tick(2000); await settle();
+    assert.equal(feedbackPending, true);
+    assert.equal(samples[0].fps, 24);
+    await client.disconnect();
 });

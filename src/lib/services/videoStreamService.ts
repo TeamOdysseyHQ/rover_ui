@@ -6,6 +6,7 @@
  */
 
 import { JpegQualityController } from './jpegQualityController.js';
+import { getApiBaseUrl } from './roverApi.js';
 
 // Protocol constants (must match backend)
 const MAGIC_NUMBER = 0x524F5652; // "ROVR" in ASCII
@@ -113,6 +114,10 @@ export class VideoStreamClient {
 	private reconnectTimeout: number | null = null;
 	private qualityController = new JpegQualityController();
 	private supportsQualityControl = false;
+	private pendingFrame: Blob | null = null;
+	private decodingImage: HTMLImageElement | null = null;
+	private decodingUrl: string | null = null;
+	private customUrl: string | null = null;
 	private lastMetricTime = 0;
 	private lastMetricFrames = 0;
 	private lastMetricBytes = 0;
@@ -156,21 +161,21 @@ export class VideoStreamClient {
 		this.cameraName = cameraName;
 
 		// Build WebSocket URL from API base URL
-		// Import dynamically to avoid circular dependency
-		const { getApiBaseUrl } = await import('$lib/services/roverApi');
+		this.customUrl = null;
 		const baseUrl = getApiBaseUrl();
 		const wsUrl = baseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
 		const url = `${wsUrl}/api/nav/cameras/${cameraName}/ws?quality=${this.config.quality}&fps=${this.config.fps}`;
 
 		try {
 			this.ws = new WebSocket(url);
+			const socket = this.ws;
 			this.ws.binaryType = 'arraybuffer';
 
 			// Setup event handlers
-			this.ws.onopen = () => this.handleOpen();
-			this.ws.onmessage = (event) => this.handleMessage(event);
-			this.ws.onerror = (event) => this.handleError(event);
-			this.ws.onclose = (event) => this.handleClose(event);
+			this.ws.onopen = () => { if (this.ws === socket) this.handleOpen(); };
+			this.ws.onmessage = (event) => { if (this.ws === socket) this.handleMessage(event); };
+			this.ws.onerror = (event) => { if (this.ws === socket) this.handleError(event); };
+			this.ws.onclose = (event) => { if (this.ws === socket) this.handleClose(event); };
 		} catch (error) {
 			this.setState('error');
 			const err = error instanceof Error ? error : new Error(String(error));
@@ -190,6 +195,8 @@ export class VideoStreamClient {
 
 		// Reset intentional disconnect flag
 		this.intentionalDisconnect = false;
+		this.cameraName = null;
+		this.customUrl = wsUrl;
 
 		// Store canvas reference
 		if (canvas) {
@@ -201,13 +208,14 @@ export class VideoStreamClient {
 
 		try {
 			this.ws = new WebSocket(wsUrl);
+			const socket = this.ws;
 			this.ws.binaryType = 'arraybuffer';
 
 			// Setup event handlers
-			this.ws.onopen = () => this.handleOpen();
-			this.ws.onmessage = (event) => this.handleMessage(event);
-			this.ws.onerror = (event) => this.handleError(event);
-			this.ws.onclose = (event) => this.handleClose(event);
+			this.ws.onopen = () => { if (this.ws === socket) this.handleOpen(); };
+			this.ws.onmessage = (event) => { if (this.ws === socket) this.handleMessage(event); };
+			this.ws.onerror = (event) => { if (this.ws === socket) this.handleError(event); };
+			this.ws.onclose = (event) => { if (this.ws === socket) this.handleClose(event); };
 		} catch (error) {
 			this.setState('error');
 			const err = error instanceof Error ? error : new Error(String(error));
@@ -222,6 +230,7 @@ export class VideoStreamClient {
 	disconnect(): void {
 		// Mark as intentional so we don't show errors or auto-reconnect
 		this.intentionalDisconnect = true;
+		this.clearPendingFrames();
 
 		if (this.reconnectTimeout) {
 			clearTimeout(this.reconnectTimeout);
@@ -418,16 +427,44 @@ export class VideoStreamClient {
 		}
 	}
 
+	private clearPendingFrames(): void {
+		this.pendingFrame = null;
+		if (this.decodingImage) {
+			this.decodingImage.onload = null;
+			this.decodingImage.onerror = null;
+			this.decodingImage.src = '';
+			this.decodingImage = null;
+		}
+		if (this.decodingUrl) URL.revokeObjectURL(this.decodingUrl);
+		this.decodingUrl = null;
+	}
+
 	private renderFrameToCanvas(jpegBlob: Blob): void {
-		if (!this.canvas || !this.ctx) return;
+		if (!this.canvas || !this.ctx || this.intentionalDisconnect) return;
+		if (this.decodingImage) {
+			// One decode in flight and only the newest waiting frame, never a stale queue.
+			this.pendingFrame = jpegBlob;
+			return;
+		}
 
 		// Create image from blob
 		const img = new Image();
 		const url = URL.createObjectURL(jpegBlob);
+		this.decodingImage = img;
+		this.decodingUrl = url;
+		const finish = () => {
+			URL.revokeObjectURL(url);
+			if (this.decodingImage !== img) return;
+			this.decodingImage = null;
+			this.decodingUrl = null;
+			const pending = this.pendingFrame;
+			this.pendingFrame = null;
+			if (pending) this.renderFrameToCanvas(pending);
+		};
 
 		img.onload = () => {
-			if (!this.canvas || !this.ctx) {
-				URL.revokeObjectURL(url);
+			if (this.decodingImage !== img || !this.canvas || !this.ctx || this.intentionalDisconnect) {
+				finish();
 				return;
 			}
 
@@ -457,12 +494,12 @@ export class VideoStreamClient {
 			// Draw image
 			this.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
 
-			URL.revokeObjectURL(url);
+			finish();
 		};
 
 		img.onerror = () => {
 			console.error('[VideoStream] Failed to load image from blob');
-			URL.revokeObjectURL(url);
+			finish();
 			this.metrics.errors++;
 		};
 
@@ -483,6 +520,7 @@ export class VideoStreamClient {
 	}
 
 	private handleClose(event: CloseEvent): void {
+		this.clearPendingFrames();
 		console.log(`[VideoStream] Disconnected: ${event.code} ${event.reason}`);
 		this.setState('disconnected');
 		this.metrics.connected = false;
@@ -493,12 +531,14 @@ export class VideoStreamClient {
 		}
 
 		// Only auto-reconnect if not intentionally disconnected
-		if (!this.intentionalDisconnect && this.config.autoReconnect && event.code !== 1000 && this.cameraName !== null) {
+		if (!this.intentionalDisconnect && this.config.autoReconnect && event.code !== 1000 && (this.cameraName !== null || this.customUrl !== null)) {
 			console.log(`[VideoStream] Reconnecting in ${this.config.reconnectDelay}ms...`);
 			this.reconnectTimeout = window.setTimeout(() => {
-				if (this.cameraName !== null) {
-					console.log(`[VideoStream] Attempting to reconnect to camera '${this.cameraName}'...`);
-					this.connect(this.cameraName, this.canvas || undefined).catch((err) => {
+				if (!this.intentionalDisconnect) {
+					const reconnect = this.customUrl
+						? this.connectCustom(this.customUrl, this.canvas || undefined)
+						: this.connect(this.cameraName!, this.canvas || undefined);
+					reconnect.catch((err) => {
 						console.error('[VideoStream] Reconnection failed:', err);
 						this.onErrorCallback?.(err);
 					});

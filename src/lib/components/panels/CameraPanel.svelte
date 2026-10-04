@@ -8,6 +8,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import { onMount, untrack } from 'svelte';
+	import { pollEvery } from '$lib/services/polling.js';
 	import { selectCameraMode } from '$lib/services/cameraStreamProfile.js';
 	import { WEBRTC_TARGET_FPS, type WebRtcMetrics } from '$lib/services/webRtcStreamClient';
 	import { OpticalFlowService } from '$lib/services/opticalFlowService';
@@ -38,7 +39,7 @@
 	let webrtcStatuses = $state<Map<string, { active_connections: number; max_connections: number }>>(new Map());
 	
 	// Polling intervals for WebRTC status
-	let webrtcStatusIntervals = new Map<string, ReturnType<typeof setInterval>>();
+	let webrtcStatusIntervals = new Map<string, () => void>();
 	
 	// Retry timers for 500 errors
 	let webrtcRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -59,6 +60,29 @@
 	// Optical flow diagnostics for RGB WebRTC cameras
 	const opticalFlowService = new OpticalFlowService();
 	let opticalFlowReady = $state(false);
+	let opticalFlowEnabled = $state<Set<string>>(new Set());
+	let mounted = false;
+
+	async function setOpticalFlow(cameraName: string, enabled: boolean) {
+		if (!enabled) {
+			opticalFlowEnabled.delete(cameraName);
+			opticalFlowEnabled = new Set(opticalFlowEnabled);
+			opticalFlowService.stop(cameraName);
+			return;
+		}
+		opticalFlowEnabled.add(cameraName);
+		opticalFlowEnabled = new Set(opticalFlowEnabled);
+		try {
+			await opticalFlowService.initialize();
+			if (!mounted) return;
+			opticalFlowReady = true;
+			startOpticalFlow(cameraName);
+		} catch (err) {
+			if (!mounted) return;
+			setOpticalFlow(cameraName, false);
+			showFeedbackMsg(`Optical flow unavailable: ${err.message}`, 'error');
+		}
+	}
 	// Resolution state per camera
 	let supportedResolutions = $state<Map<string, Array<{width: number, height: number}>>>(new Map());
 	let selectedResolutions = $state<Map<string, {width: number, height: number}>>(new Map());
@@ -218,6 +242,7 @@
 	
 	// Start WebSocket stream
 	function startWebSocketStream(cameraName: string) {
+		if (!mounted || !activeCameras.has(cameraName) || streamingModes.get(cameraName) !== 'websocket' || wsClients.has(cameraName)) return;
 		console.log(`[CameraPanel] Starting WebSocket stream for camera '${cameraName}'`);
 		
 		// Get or create canvas
@@ -302,7 +327,7 @@
 
 	// Start optical-flow diagnostics on a WebRTC RGB camera
 	function startOpticalFlow(cameraName: string) {
-		if (!activeCameras.has(cameraName) || streamingModes.get(cameraName) !== 'webrtc' ||
+		if (!mounted || !opticalFlowEnabled.has(cameraName) || !activeCameras.has(cameraName) || streamingModes.get(cameraName) !== 'webrtc' ||
 			webrtcClients.get(cameraName)?.getState() !== 'connected') return;
 		if (!opticalFlowReady) {
 			console.warn(
@@ -385,6 +410,7 @@
 				rtcMetrics.delete(cameraName);
 				rtcMetrics = new Map(rtcMetrics);
 			}
+			if (s === 'connected') startOpticalFlow(cameraName);
 			console.log(`[CameraPanel] WebRTC '${cameraName}' state: ${s}`);
 		});
 
@@ -477,9 +503,10 @@
 	// Start polling WebRTC connection status badge every 5 s
 	function startWebRtcStatusPolling(cameraName: string) {
 		stopWebRtcStatusPolling(cameraName);
-		const id = setInterval(async () => {
+		const id = pollEvery(async signal => {
 			try {
-				const st = await roverApi.getCameraWebRtcStatus(cameraName);
+				const st = await roverApi.getCameraWebRtcStatus(cameraName, signal);
+				if (signal.aborted) return;
 				webrtcStatuses.set(cameraName, { active_connections: st.active_connections, max_connections: st.max_connections ?? 5 });
 				webrtcStatuses = new Map(webrtcStatuses);
 				// Capacity limits new offers, not viewers already connected.
@@ -490,7 +517,7 @@
 
 	function stopWebRtcStatusPolling(cameraName: string) {
 		const id = webrtcStatusIntervals.get(cameraName);
-		if (id !== undefined) { clearInterval(id); webrtcStatusIntervals.delete(cameraName); }
+		if (id !== undefined) { id(); webrtcStatusIntervals.delete(cameraName); }
 	}
 
 	// Handle MJPEG fps/quality slider change (debounced 300 ms)
@@ -573,7 +600,7 @@
 			await Promise.allSettled(rtcStops);
 			webrtcClients.clear();
 			webrtcClients = new Map(webrtcClients);
-			webrtcStatusIntervals.forEach((id) => clearInterval(id));
+			webrtcStatusIntervals.forEach(stop => stop());
 			webrtcStatusIntervals.clear();
 			webrtcRetryTimers.forEach((id) => clearTimeout(id));
 			webrtcRetryTimers.clear();
@@ -605,13 +632,7 @@
 	});
 
 	onMount(() => {
-		let mounted = true;
-		void opticalFlowService.initialize().then(() => {
-			if (!mounted) return;
-			opticalFlowReady = true;
-			// A camera may connect while OpenCV is still loading.
-			webrtcClients.forEach((_, cameraName) => startOpticalFlow(cameraName));
-		}).catch(err => console.error('[CameraPanel] Optical flow initialization failed:', err));
+		mounted = true;
 		return () => {
 			mounted = false;
 			opticalFlowService.stopAll();
@@ -765,6 +786,15 @@
 							<div>{rm.fps.toFixed(1)} FPS / {rm.targetFps} · {(rm.bitrateBps / 1000000).toFixed(2)} Mbps · {rm.adaptiveQuality ? `Auto quality ${Math.round(rm.scale * 100)}% size` : 'Auto bitrate; quality needs backend update'}</div>
 						{/if}
 					</div>
+					{#if mode === 'webrtc'}
+					<div class="px-3 py-2 text-xs text-muted-foreground">
+						<label class="flex items-center gap-2">
+							<input type="checkbox" checked={opticalFlowEnabled.has(camera.name)}
+								onchange={e => { void setOpticalFlow(camera.name, e.currentTarget.checked); }} />
+							Optical-flow diagnostics
+						</label>
+					</div>
+					{/if}
 					<!-- Resolution Selector -->
 					<div class="px-3 py-2 bg-card/50 border-b border-border flex items-center justify-between">
 						<label for={`resolution-${camera.name}`} class="text-xs text-muted-foreground">

@@ -18,9 +18,10 @@ export const isRosConnected = derived(rosStatus, $status => $status.status === '
 export const teensyTopicData = writable(null);
 
 // Check ROS status
-export async function checkRosStatus() {
+export async function checkRosStatus(signal) {
 	try {
-		const response = await api.getRosStatus();
+		const response = await api.getRosStatus(signal);
+		if (signal?.aborted) return { connected: false };
 		const statusData = response.status || {};
 		const connected = statusData.connected === true;
 		
@@ -34,6 +35,7 @@ export async function checkRosStatus() {
 		
 		return { connected };
 	} catch (error) {
+		if (signal?.aborted) return { connected: false };
 		console.error('Error checking ROS status:', error);
 		rosStatus.set({
 			status: 'disconnected',

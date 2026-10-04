@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { browser } from '$app/environment';
+	import { pollEvery } from '$lib/services/polling.js';
 	import { Activity, RefreshCw, Gauge, Play, Square } from '@lucide/svelte';
 	import * as roverApi from '$lib/services/roverApi';
 	import * as Card from '$lib/components/ui/card';
@@ -39,7 +40,9 @@
 	let history = $state<number[][]>(WHEEL_KEYS.map(() => []));
 	let timeLabels = $state<string[]>([]);
 
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let pollTimer: (() => void) | null = null;
+	let mounted = false;
+	let startAttempt = 0;
 
 	// ── chart data (derived) ─────────────────────────────────────────────────
 	let chartData = $derived({
@@ -112,34 +115,38 @@
 		lastUpdateTime = new Date();
 	}
 
-	async function poll() {
+	async function poll(signal: AbortSignal) {
 		try {
-			const res = await roverApi.getMotorRpms();
-			if (res.success) {
+			const res = await roverApi.getMotorRpms(signal);
+			if (!signal.aborted && res.success) {
 				pushData(res.data);
 				lastError = null;
 			}
 		} catch (e: any) {
-			lastError = e.message ?? 'Poll failed';
+			if (!signal.aborted) lastError = e.message ?? 'Poll failed';
 		}
 	}
 
 	async function start() {
-		if (isRunning) return;
+		if (!mounted || isRunning) return;
+		const attempt = ++startAttempt;
+		isRunning = true;
 		try {
 			await roverApi.subscribeMotorRpms();
 			isSubscribed = true;
 		} catch {
 			// subscription endpoint may not require awaiting
 		}
-		pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+		if (!mounted || attempt !== startAttempt) return;
+		pollTimer = pollEvery(poll, POLL_INTERVAL_MS);
 		isRunning = true;
 		lastError = null;
 	}
 
 	function stop() {
+		startAttempt++;
 		if (pollTimer !== null) {
-			clearInterval(pollTimer);
+			pollTimer();
 			pollTimer = null;
 		}
 		isRunning = false;
@@ -155,23 +162,27 @@
 	let LineChart: any = $state(null);
 
 	// ── lifecycle ─────────────────────────────────────────────────────────────
-	onMount(async () => {
-		const { Line } = await import('svelte-chartjs');
-		const {
-			Chart,
-			LineElement,
-			PointElement,
-			LinearScale,
-			CategoryScale,
-			Tooltip,
-			Legend,
-			Filler
-		} = await import('chart.js');
-		Chart.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
-		LineChart = Line;
-		start();
+	onMount(() => {
+		mounted = true;
+		void (async () => {
+			const { Line } = await import('svelte-chartjs');
+			const {
+				Chart,
+				LineElement,
+				PointElement,
+				LinearScale,
+				CategoryScale,
+				Tooltip,
+				Legend,
+				Filler
+			} = await import('chart.js');
+			Chart.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
+			if (!mounted) return;
+			LineChart = Line;
+			await start();
+		})().catch(error => { if (mounted) lastError = error.message; });
+		return () => { mounted = false; stop(); };
 	});
-	onDestroy(() => { stop(); });
 </script>
 
 <Card.Root class="bg-card border-border">
