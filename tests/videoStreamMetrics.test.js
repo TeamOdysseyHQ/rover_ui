@@ -41,3 +41,79 @@ test('camera JPEG quality adapts through the existing control protocol without r
     assert.equal(client.getMetrics().targetFps, 30);
     assert.equal(client.getMetrics().quality, 75);
 });
+
+function decoder(t) {
+    const images = [], blobs = [], revoked = [], draws = [];
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'Image');
+    class FakeImage { constructor() { this.width = 640; this.height = 480; images.push(this); } }
+    Object.defineProperty(globalThis, 'Image', { configurable: true, value: FakeImage });
+    t.after(() => { if (original) Object.defineProperty(globalThis, 'Image', original); else delete globalThis.Image; });
+    t.mock.method(URL, 'createObjectURL', blob => { blobs.push(blob); return `blob:${blobs.length}`; });
+    t.mock.method(URL, 'revokeObjectURL', url => revoked.push(url));
+    const client = new VideoStreamClient();
+    client.canvas = { width: 640, height: 480 };
+    client.ctx = { fillRect() {}, drawImage: image => draws.push(image) };
+    return { client, images, blobs, revoked, draws };
+}
+
+test('JPEG bursts retain one active decode and the newest pending frame', async t => {
+    const { client, images, blobs, draws, revoked } = decoder(t);
+    for (let n = 1; n <= 200; n++) client.handleFrame(new Uint8Array([n]).buffer);
+    assert.equal(images.length, 1);
+    assert.equal(blobs.length, 1);
+    images[0].onload();
+    assert.equal(images.length, 2);
+    assert.equal(new Uint8Array(await blobs[1].arrayBuffer())[0], 200);
+    images[1].onload();
+    assert.equal(draws.length, 2);
+    assert.equal(client.pendingFrame, null);
+    assert.equal(client.decodingImage, null);
+    assert.deepEqual(revoked, ['blob:1', 'blob:2']);
+});
+
+test('disconnect discards pending images and late decodes cannot draw', t => {
+    const { client, images, draws, revoked } = decoder(t);
+    client.handleFrame(new Uint8Array([1]).buffer);
+    client.handleFrame(new Uint8Array([2]).buffer);
+    const lateLoad = images[0].onload;
+    client.disconnect(); lateLoad();
+    assert.equal(draws.length, 0);
+    assert.equal(images.length, 1);
+    assert.equal(client.pendingFrame, null);
+    assert.ok(revoked.includes('blob:1'));
+});
+
+test('custom WebSocket streams reconnect and ignore events from the previous socket', async t => {
+    const originalWindow = globalThis.window;
+    globalThis.window = globalThis;
+    t.after(() => { if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow; });
+    t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+    const sockets = [];
+    class FakeSocket { constructor(url) { this.url = url; sockets.push(this); } close() {} }
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+    Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: FakeSocket });
+    t.after(() => Object.defineProperty(globalThis, 'WebSocket', original));
+    const client = new VideoStreamClient({ reconnectDelay: 100 });
+    await client.connectCustom('ws://mock.invalid/ros'); sockets[0].onopen();
+    sockets[0].onclose({ code: 1006, reason: 'lost' });
+    t.mock.timers.tick(100);
+    assert.equal(sockets.length, 2);
+    assert.equal(sockets[1].url, 'ws://mock.invalid/ros');
+    sockets[1].onopen(); sockets[0].onclose({ code: 1006, reason: 'late' });
+    assert.equal(client.getState(), 'connected');
+    client.disconnect(); t.mock.timers.tick(1000);
+    assert.equal(sockets.length, 2);
+});
+
+test('hardware WebSocket URL uses the API host and a late open cannot undo disconnect', async t => {
+    const sockets = [];
+    class FakeSocket { constructor(url) { this.url = url; sockets.push(this); } close() {} }
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'WebSocket');
+    Object.defineProperty(globalThis, 'WebSocket', { configurable: true, value: FakeSocket });
+    t.after(() => Object.defineProperty(globalThis, 'WebSocket', original));
+    const client = new VideoStreamClient({ fps: 24 });
+    await client.connect('science');
+    assert.match(sockets[0].url, /^ws:\/\/192\.168\.1\.3:6767\/api\/nav\/cameras\/science\/ws\?quality=85&fps=24$/);
+    client.disconnect(); sockets[0].onopen();
+    assert.equal(client.getState(), 'disconnected');
+});

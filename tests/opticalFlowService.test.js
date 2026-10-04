@@ -147,3 +147,28 @@ test('stopping cancels queued video callbacks and stale callbacks cannot resched
     assert.throws(() => service.start('old-browser', {}), /requestVideoFrameCallback/);
     assert.equal(service.states.size, 0);
 });
+
+test('video callbacks cap diagnostics at 15 FPS and release state in hidden tabs', t => {
+    const { service, live } = setup(); service.states.clear();
+    let callback;
+    const document = { hidden: false, createElement: () => ({ getContext: () => ({ drawImage() {}, getImageData: () => frame() }) }) };
+    const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    const originalMedia = Object.getOwnPropertyDescriptor(globalThis, 'HTMLMediaElement');
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: document });
+    Object.defineProperty(globalThis, 'HTMLMediaElement', { configurable: true, value: { HAVE_CURRENT_DATA: 2 } });
+    t.after(() => {
+        if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument); else delete globalThis.document;
+        if (originalMedia) Object.defineProperty(globalThis, 'HTMLMediaElement', originalMedia); else delete globalThis.HTMLMediaElement;
+    });
+    const video = { readyState: 2, videoWidth: 640, videoHeight: 480,
+        requestVideoFrameCallback: fn => { callback = fn; return 1; }, cancelVideoFrameCallback() {} };
+    service.start('science', video);
+    for (let i = 0; i < 60; i++) callback(0, { mediaTime: 1 + i / 60 });
+    const state = service.states.get('science');
+    assert.ok(state.frameCount >= 10 && state.frameCount <= 15, `processed ${state.frameCount}`);
+    document.hidden = true; callback(0, { mediaTime: 2 });
+    assert.equal(live.size, 0);
+    document.hidden = false; callback(0, { mediaTime: 3 });
+    assert.equal(live.size, 2);
+    service.stopAll(); assert.equal(live.size, 0);
+});

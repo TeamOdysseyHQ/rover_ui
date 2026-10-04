@@ -29,7 +29,6 @@ function loadBrowserRuntime(): Promise<any> {
     return browserRuntime;
 }
 
-
 interface FlowPoint {
     x: number;
     y: number;
@@ -123,170 +122,63 @@ export class OpticalFlowService {
         }
     }
 
-    /**
-     * Check whether OpenCV.js is ready.
-     */
-    isReady(): boolean {
-        return this.cv !== null && !!this.cv.Mat;
-    }
+    isReady(): boolean { return !!this.cv?.Mat; }
 
-    /**
-     * Get the OpenCV instance.
-     */
     getCV(): any {
-        if (!this.isReady()) {
-            throw new Error(
-                '[OpticalFlow] OpenCV.js is not initialized'
-            );
-        }
-
+        if (!this.isReady()) throw new Error('Initialize OpenCV before starting optical flow');
         return this.cv;
     }
 
-    /**
-     * Start optical-flow processing for one camera.
-     *
-     * The original video element is never modified.
-     * Frames are copied into a hidden/reduced-resolution canvas.
-     */
-    start(
-        cameraName: string,
-        video: HTMLVideoElement,
-        onResult?: (result: OpticalFlowResult) => void
-    ): void {
-        if (!this.isReady()) {
-            throw new Error(
-                '[OpticalFlow] Call initialize() before start()'
-            );
-        }
-
-        if (this.states.has(cameraName)) {
-            console.warn(
-                `[OpticalFlow] ${cameraName} is already running`
-            );
-            return;
-        }
-
+    start(cameraName: string, video: HTMLVideoElement, onResult?: (result: OpticalFlowResult) => void): void {
+        this.getCV();
+        if (this.states.has(cameraName)) return;
         if (typeof video.requestVideoFrameCallback !== 'function') {
             throw new Error('Optical flow requires requestVideoFrameCallback');
         }
-
         const canvas = document.createElement('canvas');
-
         canvas.width = this.processingWidth;
         canvas.height = this.processingHeight;
-
-        const ctx = canvas.getContext('2d', {
-            willReadFrequently: true
-        });
-
-        if (!ctx) {
-            throw new Error(
-                `[OpticalFlow] Could not create canvas context for ${cameraName}`
-            );
-        }
-
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) throw new Error('Could not create optical-flow canvas');
         const state: CameraFlowState = {
-            video,
-            canvas,
-            ctx,
-
-            previousGray: null,
-            previousPoints: null,
-
-            running: true,
-            frameCount: 0,
-            lastTimestamp: 0,
-            callbackId: null
+            video, canvas, ctx, previousGray: null, previousPoints: null,
+            running: true, frameCount: 0, lastTimestamp: 0, callbackId: null
         };
-
         this.states.set(cameraName, state);
-
-        console.log(
-            `[OpticalFlow] Started processing: ${cameraName}`
-        );
-
-        const processFrame = (
-            _now: DOMHighResTimeStamp,
-            metadata: VideoFrameCallbackMetadata
-        ) => {
+        const next = (_now: number, metadata: VideoFrameCallbackMetadata) => {
             state.callbackId = null;
-            if (!state.running) {
-                return;
-            }
-
-            if (
-                video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-                video.videoWidth > 0 &&
-                video.videoHeight > 0
-            ) {
+            if (!state.running) return;
+            // Diagnostics must not spend CPU in a hidden tab or monopolize high-FPS streams.
+            if (document.hidden) this.releaseState(state);
+            else if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 &&
+                video.videoHeight > 0 && (!state.previousGray || metadata.mediaTime < state.lastTimestamp ||
+                    metadata.mediaTime - state.lastTimestamp >= 1 / 15)) {
                 try {
-                    const result = this.processFrame(
-                        cameraName,
-                        state,
-                        metadata.mediaTime
-                    );
-
-                    if (result && onResult) {
-                        onResult(result);
-                    }
+                    const result = this.processFrame(cameraName, state, metadata.mediaTime);
+                    if (result) onResult?.(result);
                 } catch (error) {
-                    console.error(
-                        `[OpticalFlow] Frame processing error (${cameraName}):`,
-                        error
-                    );
                     this.releaseState(state);
+                    console.error(`[OpticalFlow] Processing failed (${cameraName}):`, error);
                 }
             }
-
-            if (
-                state.running &&
-                'requestVideoFrameCallback' in video
-            ) {
-                state.callbackId = video.requestVideoFrameCallback(processFrame);
-            }
+            if (state.running) state.callbackId = video.requestVideoFrameCallback(next);
         };
-
-        state.callbackId = video.requestVideoFrameCallback(processFrame);
+        state.callbackId = video.requestVideoFrameCallback(next);
     }
 
-    /**
-     * Stop processing for one camera.
-     */
     stop(cameraName: string): void {
         const state = this.states.get(cameraName);
-
-        if (!state) {
-            return;
-        }
-
+        if (!state) return;
         state.running = false;
-        if (state.callbackId !== null) {
-            state.video.cancelVideoFrameCallback(state.callbackId);
-            state.callbackId = null;
-        }
-
+        if (state.callbackId !== null) state.video.cancelVideoFrameCallback(state.callbackId);
         this.releaseState(state);
-
         this.states.delete(cameraName);
-
-        console.log(
-            `[OpticalFlow] Stopped processing: ${cameraName}`
-        );
     }
 
-    /**
-     * Stop every camera.
-     */
     stopAll(): void {
-        for (const cameraName of this.states.keys()) {
-            this.stop(cameraName);
-        }
+        for (const cameraName of this.states.keys()) this.stop(cameraName);
     }
 
-    /**
-     * Process one decoded video frame.
-     */
     private processFrame(
         cameraName: string,
         state: CameraFlowState,
@@ -304,20 +196,9 @@ export class OpticalFlowService {
         state.lastTimestamp = mediaTime;
 
         // Copy the WebRTC video frame into the reduced-resolution canvas.
-        state.ctx.drawImage(
-            state.video,
-            0,
-            0,
-            this.processingWidth,
-            this.processingHeight
-        );
+        state.ctx.drawImage(state.video, 0, 0, this.processingWidth, this.processingHeight);
 
-        const imageData = state.ctx.getImageData(
-            0,
-            0,
-            this.processingWidth,
-            this.processingHeight
-        );
+        const imageData = state.ctx.getImageData(0, 0, this.processingWidth, this.processingHeight);
 
         // Every native allocation must be released, including on OpenCV errors.
         const resources = new Set<any>();
@@ -329,23 +210,8 @@ export class OpticalFlowService {
 
             // First frame, or no usable features:
             // detect features but cannot calculate motion yet.
-            if (
-                !state.previousGray ||
-                !state.previousPoints ||
-                state.previousPoints.rows === 0
-            ) {
-                // Release the previous empty point matrix.
-                if (state.previousPoints) {
-                    state.previousPoints.delete();
-                    state.previousPoints = null;
-                }
-
-                // Release the previous grayscale frame before replacing it.
-                if (state.previousGray) {
-                    state.previousGray.delete();
-                    state.previousGray = null;
-                }
-
+            if (!state.previousGray || !state.previousPoints || state.previousPoints.rows === 0) {
+                this.releaseState(state);
                 const points = this.detectFeatures(gray);
 
                 state.previousGray = gray;
@@ -358,90 +224,40 @@ export class OpticalFlowService {
             const nextPoints = own(new cv.Mat());
             const status = own(new cv.Mat());
             const error = own(new cv.Mat());
-
             const backwardPoints = own(new cv.Mat());
             const backwardStatus = own(new cv.Mat());
             const backwardError = own(new cv.Mat());
-
             const winSize = new cv.Size(21, 21);
-
             const maxLevel = 3;
+            const criteria = new cv.TermCriteria(cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 30, 0.01);
 
-            const criteria = new cv.TermCriteria(
-                cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT,
-                30,
-                0.01
-            );
-
-            cv.calcOpticalFlowPyrLK(
-                state.previousGray,
-                gray,
-                state.previousPoints,
-                nextPoints,
-                status,
-                error,
-                winSize,
-                maxLevel,
-                criteria
-            );
-
-            // Track the points backwards from the current frame
-            // to the previous frame.
-            cv.calcOpticalFlowPyrLK(
-                gray,
-                state.previousGray,
-                nextPoints,
-                backwardPoints,
-                backwardStatus,
-                backwardError,
-                winSize,
-                maxLevel,
-                criteria
-            );
+            cv.calcOpticalFlowPyrLK(state.previousGray, gray, state.previousPoints,
+                nextPoints, status, error, winSize, maxLevel, criteria);
+            // Track backwards to reject points that do not return to their original position.
+            cv.calcOpticalFlowPyrLK(gray, state.previousGray, nextPoints,
+                backwardPoints, backwardStatus, backwardError, winSize, maxLevel, criteria);
 
             const points: FlowPoint[] = [];
 
-            for (
-                let i = 0;
-                i < state.previousPoints.rows;
-                i++
-            ) {
-                const forwardValid =
-                    status.ucharAt(i, 0);
-
-                const backwardValid =
-                    backwardStatus.ucharAt(i, 0);
+            for (let i = 0; i < state.previousPoints.rows; i++) {
+                const forwardValid = status.ucharAt(i, 0);
+                const backwardValid = backwardStatus.ucharAt(i, 0);
 
                 if (!forwardValid || !backwardValid) {
                     continue;
                 }
 
-                const oldX =
-                    state.previousPoints.floatAt(i, 0);
-
-                const oldY =
-                    state.previousPoints.floatAt(i, 1);
-
-                const newX =
-                    nextPoints.floatAt(i, 0);
-
-                const newY =
-                    nextPoints.floatAt(i, 1);
-
-                const backX =
-                    backwardPoints.floatAt(i, 0);
-
-                const backY =
-                    backwardPoints.floatAt(i, 1);
+                const oldX = state.previousPoints.floatAt(i, 0);
+                const oldY = state.previousPoints.floatAt(i, 1);
+                const newX = nextPoints.floatAt(i, 0);
+                const newY = nextPoints.floatAt(i, 1);
+                const backX = backwardPoints.floatAt(i, 0);
+                const backY = backwardPoints.floatAt(i, 1);
 
                 // Forward-backward tracking error.
                 const fbDx = oldX - backX;
                 const fbDy = oldY - backY;
-
-                const fbError = Math.sqrt(
-                    fbDx * fbDx +
-                    fbDy * fbDy
-                );
+                const fbError = Math.sqrt(fbDx * fbDx + fbDy * fbDy);
 
                 // Reject unreliable tracks.
                 if (!Number.isFinite(fbError) || fbError > 1.5) {
@@ -450,16 +266,9 @@ export class OpticalFlowService {
 
                 const dx = newX - oldX;
                 const dy = newY - oldY;
+                const magnitude = Math.sqrt(dx * dx + dy * dy);
 
-                const magnitude = Math.sqrt(
-                    dx * dx +
-                    dy * dy
-                );
-
-                if (
-                    !Number.isFinite(dx) ||
-                    !Number.isFinite(dy)
-                ) {
+                if (!Number.isFinite(dx) || !Number.isFinite(dy)) {
                     continue;
                 }
 
@@ -468,155 +277,56 @@ export class OpticalFlowService {
                     continue;
                 }
 
-                points.push({
-                    x: newX,
-                    y: newY,
-                    dx,
-                    dy
+                points.push({ x: newX, y: newY, dx, dy });
+            }
+            // Reject motion outliers using median absolute deviation.
+
+            const dxValues = points.map(point => point.dx);
+            const dyValues = points.map(point => point.dy);
+            const medianDx = this.median(dxValues);
+            const medianDy = this.median(dyValues);
+            const madDx = this.medianAbsoluteDeviation(dxValues, medianDx);
+            const madDy = this.medianAbsoluteDeviation(dyValues, medianDy);
+            const robustDxThreshold = Math.max(3 * madDx, 1.0);
+            const robustDyThreshold = Math.max(3 * madDy, 1.0);
+            const filteredPoints = points.filter(point =>
+                Math.abs(point.dx - medianDx) <= robustDxThreshold &&
+                Math.abs(point.dy - medianDy) <= robustDyThreshold);
+
+            const detectedCandidatePoints = points.length;
+            const trackedPoints = filteredPoints.length;
+            const totalDetectedPoints = state.previousPoints.rows;
+            const trackingRetention = totalDetectedPoints > 0 ? trackedPoints / totalDetectedPoints : 0;
+            const robustRetention = detectedCandidatePoints > 0 ? trackedPoints / detectedCandidatePoints : 0;
+
+            if (state.frameCount % 30 === 0) {
+                console.debug('[OpticalFlow] Tracking quality:', {
+                    detected: totalDetectedPoints, fbAccepted: detectedCandidatePoints,
+                    robustAccepted: trackedPoints,
+                    fbRetention: totalDetectedPoints ? detectedCandidatePoints / totalDetectedPoints : 0,
+                    trackingRetention, robustRetention
                 });
             }
 
-            // ============================================================
-            // ROBUST MOTION OUTLIER FILTER
-            // ============================================================
-
-            const dxValues = points.map(
-                point => point.dx
-            );
-
-            const dyValues = points.map(
-                point => point.dy
-            );
-
-            const medianDx =
-                this.median(dxValues);
-
-            const medianDy =
-                this.median(dyValues);
-
-            const madDx =
-                this.medianAbsoluteDeviation(
-                    dxValues,
-                    medianDx
-                );
-
-            const madDy =
-                this.medianAbsoluteDeviation(
-                    dyValues,
-                    medianDy
-                );
-
-            const robustDxThreshold =
-                Math.max(
-                    3 * madDx,
-                    1.0
-                );
-
-            const robustDyThreshold =
-                Math.max(
-                    3 * madDy,
-                    1.0
-                );
-
-            const filteredPoints =
-                points.filter(point =>
-                    Math.abs(point.dx - medianDx)
-                        <= robustDxThreshold &&
-                    Math.abs(point.dy - medianDy)
-                        <= robustDyThreshold
-                );
-
-
-            const detectedCandidatePoints =
-                points.length;
-
-            const trackedPoints =
-                filteredPoints.length;
-
-            const totalDetectedPoints =
-                state.previousPoints.rows;
-
-            const trackingRetention =
-                totalDetectedPoints > 0
-                    ? trackedPoints / totalDetectedPoints
-                    : 0;
-
-            const robustRetention =
-                detectedCandidatePoints > 0
-                    ? trackedPoints / detectedCandidatePoints
-                    : 0;
-
-            if (state.frameCount % 30 === 0) {
-                console.log(
-                    '[OpticalFlow] Tracking quality:',
-                    {
-                        detected: totalDetectedPoints,
-                        fbAccepted: detectedCandidatePoints,
-                        robustAccepted: trackedPoints,
-                        fbRetention: totalDetectedPoints > 0 ? detectedCandidatePoints / totalDetectedPoints : 0,
-                        trackingRetention,
-                        robustRetention
-                    }
-                );
-            }
-
-            let totalDx = 0;
-            let totalDy = 0;
-            let totalMagnitude = 0;
-
-            const topDy: number[] = [];
-            const middleDy: number[] = [];
-            const bottomDy: number[] = [];
-
+            const bands: number[][] = [[], [], []];
+            let totalDx = 0, totalDy = 0, totalMagnitude = 0;
             for (const point of filteredPoints) {
                 totalDx += point.dx;
                 totalDy += point.dy;
-
-                totalMagnitude += Math.sqrt(
-                    point.dx * point.dx +
-                    point.dy * point.dy
-                );
-
-                if (
-                    point.y <
-                    this.processingHeight / 3
-                ) {
-                    topDy.push(point.dy);
-                } else if (
-                    point.y <
-                    (2 * this.processingHeight) / 3
-                ) {
-                    middleDy.push(point.dy);
-                } else {
-                    bottomDy.push(point.dy);
-                }
+                totalMagnitude += Math.hypot(point.dx, point.dy);
+                bands[Math.min(2, Math.floor(point.y * 3 / this.processingHeight))].push(point.dy);
             }
-            const meanDx =
-                trackedPoints > 0
-                    ? totalDx / trackedPoints
-                    : 0;
-
-            const meanDy =
-                trackedPoints > 0
-                    ? totalDy / trackedPoints
-                    : 0;
-
-            const meanMagnitude =
-                trackedPoints > 0
-                    ? totalMagnitude / trackedPoints
-                    : 0;
-
+            const [topDy, middleDy, bottomDy] = bands;
+            const meanDx = trackedPoints ? totalDx / trackedPoints : 0;
+            const meanDy = trackedPoints ? totalDy / trackedPoints : 0;
+            const meanMagnitude = trackedPoints ? totalMagnitude / trackedPoints : 0;
             const result: OpticalFlowResult = {
                 cameraName,
-
                 frameCount: state.frameCount,
                 trackedPoints,
-
                 meanDx,
                 meanDy,
-
                 meanMagnitude,
-
                 topMeanDy: this.mean(topDy),
                 middleMeanDy: this.mean(middleDy),
                 bottomMeanDy: this.mean(bottomDy),
@@ -625,7 +335,6 @@ export class OpticalFlowService {
                 bottomPoints: bottomDy.length,
                 mediaTime,
                 deltaTime,
-
                 points: filteredPoints
             };
 
@@ -652,7 +361,6 @@ export class OpticalFlowService {
      */
     private detectFeatures(gray: any): any {
         const cv = this.getCV();
-
         const detector = new cv.FastFeatureDetector(
             5,      // lower threshold
             true,   // non-max suppression
@@ -666,9 +374,7 @@ export class OpticalFlowService {
 
             const count = keypoints.size();
 
-            if (count === 0) {
-                return new cv.Mat();
-            }
+            if (!count) return new cv.Mat();
 
             // Bound LK work on highly textured frames. Strongest corners first.
             const selected = Array.from({ length: count }, (_, i) => keypoints.get(i))
@@ -676,12 +382,7 @@ export class OpticalFlowService {
                     point.pt.x < this.processingWidth - 8 && point.pt.y < this.processingHeight - 8)
                 .sort((a, b) => b.response - a.response)
                 .slice(0, 240);
-            const points = new cv.Mat(
-                selected.length,
-                1,
-                cv.CV_32FC2
-            );
-
+            const points = new cv.Mat(selected.length, 1, cv.CV_32FC2);
             const data = points.data32F;
 
             for (let i = 0; i < selected.length; i++) {
@@ -699,73 +400,24 @@ export class OpticalFlowService {
     }
 
     private median(values: number[]): number {
-        if (values.length === 0) {
-            return 0;
-        }
-
-        const sorted = [...values].sort(
-            (a, b) => a - b
-        );
-
-        const middle =
-            Math.floor(sorted.length / 2);
-
-        if (sorted.length % 2 === 0) {
-            return (
-                sorted[middle - 1] +
-                sorted[middle]
-            ) / 2;
-        }
-
-        return sorted[middle];
+        if (!values.length) return 0;
+        const sorted = [...values].sort((a, b) => a - b);
+        const middle = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
     }
 
-    /**
-     * Calculate the median absolute deviation of an array.
-     */
-    private medianAbsoluteDeviation(
-        values: number[],
-        medianValue: number
-    ): number {
-        if (values.length === 0) {
-            return 0;
-        }
-
-        const deviations = values.map(
-            value => Math.abs(value - medianValue)
-        );
-
-        return this.median(deviations);
+    private medianAbsoluteDeviation(values: number[], median: number): number {
+        return this.median(values.map(value => Math.abs(value - median)));
     }
-    /**
-     * Calculate the arithmetic mean of an array.
-     */
+
     private mean(values: number[]): number | null {
-        if (values.length === 0) {
-            return null;
-        }
-
-        let sum = 0;
-
-        for (const value of values) {
-            sum += value;
-        }
-
-        return sum / values.length;
+        return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
     }
 
-    /**
-     * Release OpenCV resources associated with one camera.
-     */
     private releaseState(state: CameraFlowState): void {
-        if (state.previousGray) {
-            state.previousGray.delete();
-            state.previousGray = null;
-        }
-
-        if (state.previousPoints) {
-            state.previousPoints.delete();
-            state.previousPoints = null;
-        }
+        state.previousGray?.delete();
+        state.previousPoints?.delete();
+        state.previousGray = null;
+        state.previousPoints = null;
     }
 }

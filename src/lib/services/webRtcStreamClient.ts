@@ -180,6 +180,8 @@ export class WebRtcStreamClient {
 				if (this.session !== session) return;
 				const metrics = sampler.sample(stats);
 				if (metrics) {
+					// A slow feedback endpoint must not delay delivered-FPS updates.
+					this.onMetricsCallback?.({ ...metrics, targetFps: session.targetFps, scale: session.scale, adaptiveQuality: !!session.feedbackUrl });
 					// Hidden tabs can throttle decoding; do not downgrade the stream for that.
 					if (session.feedbackUrl && session.pc.connectionState === 'connected' && (typeof document === 'undefined' || !document.hidden)) {
 						const response = await fetch(session.feedbackUrl, {
@@ -189,10 +191,12 @@ export class WebRtcStreamClient {
 						});
 						if (response.ok) {
 							const profile = await response.json();
-							if (Number.isFinite(profile.scale) && profile.scale >= 0.5 && profile.scale <= 1) session.scale = profile.scale;
+							if (Number.isFinite(profile.scale) && profile.scale >= 0.5 && profile.scale <= 1 && this.session === session) {
+									session.scale = profile.scale;
+									this.onMetricsCallback?.({ ...metrics, targetFps: session.targetFps, scale: session.scale, adaptiveQuality: true });
+								}
 						} else if (response.status === 404 || response.status === 405) session.feedbackUrl = undefined;
 					}
-					if (this.session === session) this.onMetricsCallback?.({ ...metrics, targetFps: session.targetFps, scale: session.scale, adaptiveQuality: !!session.feedbackUrl });
 				}
 			} catch (error) {
 				if (!session.controller.signal.aborted) console.debug('[WebRTC] Metrics sample unavailable:', error);

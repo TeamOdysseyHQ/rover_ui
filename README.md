@@ -1,5 +1,19 @@
 # Rover UI — Rolling-Shutter / Jello Reduction Handoff
 
+## Performance review follow-up (4 October 2026)
+
+Optical-flow diagnostics are optional per camera and disabled by default. Enabling
+**Optical-flow diagnostics** loads OpenCV on demand. Processing is capped at 15 FPS
+and pauses in hidden tabs. The service has been simplified while retaining the same
+LK, forward/backward, MAD and spatial measurement stages.
+
+WebSocket rendering keeps one active JPEG decode and the newest pending frame,
+so a busy renderer cannot build an old-frame queue. Camera status, ROS status and
+RPM polling wait for each request to finish before scheduling another, with read
+request deadlines and cancellation on teardown. FPS metrics are published before
+waiting for adaptive-quality feedback. Closing/editing fullscreen viewers releases
+only their connection; camera capture is controlled by the dashboard camera buttons.
+
 ## PR #2 review updates (4 October 2026)
 
 The handoff below records the initial prototype. Review fixes now load OpenCV as a

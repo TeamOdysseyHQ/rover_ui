@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
+  import { pollEvery } from '$lib/services/polling.js';
   import { X, Wifi, LayoutGrid } from '@lucide/svelte';
   import { commandedVelocity } from '$lib/stores/rosStore';
   import { isFullscreen, fullscreenLayout, fullscreenSlots } from '$lib/stores/fullscreenStore';
@@ -9,6 +10,7 @@
   // ─── State ────────────────────────────────────────────────────────────────
   let rpms = $state({ front_left: 0, front_right: 0, mid_left: 0, mid_right: 0, rear_left: 0, rear_right: 0 });
   let rpmInterval;
+  let mounted = false;
   
   let availableCameras = $state([
     { id: 'ros', label: 'ROS Camera', type: 'ros' }
@@ -43,10 +45,11 @@
   // ─── Motor RPM polling ────────────────────────────────────────────────────
   async function startRpmPolling() {
     try { await subscribeMotorRpms(); } catch (_) {}
-    rpmInterval = setInterval(async () => {
+    if (!mounted) return;
+    rpmInterval = pollEvery(async signal => {
       try {
-        const result = await getMotorRpms();
-        if (result?.success && result?.data) {
+        const result = await getMotorRpms(signal);
+        if (!signal.aborted && result?.success && result?.data) {
           rpms = result.data;
         }
       } catch (_) {}
@@ -55,7 +58,7 @@
 
   function stopRpmPolling() {
     if (rpmInterval) {
-      clearInterval(rpmInterval);
+      rpmInterval();
       rpmInterval = null;
     }
   }
@@ -81,17 +84,18 @@
     }
   }
 
-  onMount(async () => {
+  onMount(() => {
+    mounted = true;
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    await fetchCameras();
-    await startRpmPolling();
-
     syncLayoutSlots($fullscreenLayout);
-  });
-
-  onDestroy(async () => {
-    document.body.style.overflow = '';
-    stopRpmPolling();
+    void fetchCameras();
+    void startRpmPolling();
+    return () => {
+      mounted = false;
+      document.body.style.overflow = previousOverflow;
+      stopRpmPolling();
+    };
   });
 
   function close() {

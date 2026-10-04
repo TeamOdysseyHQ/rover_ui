@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
   import { VideoStreamClient, WebRtcStreamClient, WEBRTC_TARGET_FPS } from '$lib/services/videoStreamService';
-  import { getApiBaseUrl, startCamera, stopCamera, getSupportedResolutions } from '$lib/services/roverApi';
+  import { getApiBaseUrl, startCamera, getSupportedResolutions } from '$lib/services/roverApi';
   import { selectCameraMode } from '$lib/services/cameraStreamProfile.js';
 
   let { 
@@ -25,6 +25,8 @@
 
   let wsClient = null;
   let rtcClient = null;
+  let streamAttempt = 0;
+  let destroyed = false;
 
   function baseUrl() {
     return getApiBaseUrl();
@@ -67,7 +69,8 @@
     return `${getBaseUrl()}/api/nav/cameras/${encodeURIComponent(selectedCamera)}/webrtc`;
   }
 
-  async function teardownStream(stopBackend = true) {
+  async function teardownStream() {
+    streamAttempt++;
     streamError = '';
     if (wsClient) {
       wsClient.disconnect();
@@ -81,18 +84,17 @@
     rtcMetrics = null;
     actualFps = null;
     
-    if (stopBackend && !isRos && selectedCamera) {
-      try {
-        await stopCamera(selectedCamera);
-      } catch (e: any) {
-        console.error('Failed to stop camera:', e);
-      }
-    }
+    // The camera is shared with dashboard/other slots. Only release this viewer.
+
   }
 
   async function initStream() {
-    await teardownStream(false);
+    const stopping = teardownStream();
+    const attempt = streamAttempt;
+    const current = () => !destroyed && attempt === streamAttempt;
+    await stopping;
     await tick();
+    if (!current()) return;
 
     if (!config.isConfigured || !selectedCamera) return;
 
@@ -105,16 +107,20 @@
       try {
         const camera = availableCameras.find(cam => (cam.id || cam.name) === selectedCamera);
         const capabilities = await getSupportedResolutions(selectedCamera).catch(() => ({ formats: [] }));
+        if (!current()) return;
         const profile = selectCameraMode(capabilities.formats, width, height, camera?.default_fps);
         const started = await startCamera(selectedCamera, width, height, profile.fps, profile.pixelFormat);
+        if (!current()) return;
         streamFps = started.camera?.fps > 0 ? Math.min(profile.fps, started.camera.fps) : profile.fps;
         // Give backend a short moment to initialize capture before attaching clients.
         await new Promise((resolve) => setTimeout(resolve, 150));
       } catch (e: any) {
         streamError = 'Failed to start camera: ' + e.message;
         console.error(streamError);
+        return;
       }
     }
+    if (!current()) return;
 
     if (config.streamType === 'mjpeg') {
       if (imgRef) {
@@ -127,7 +133,7 @@
       wsClient.onMetrics(metrics => {
         if (wsClient === currentClient) actualFps = metrics.fps;
       });
-      wsClient.onError((err) => { streamError = err.message || 'WebSocket Error'; });
+      wsClient.onError((err) => { if (wsClient === currentClient) streamError = err.message || 'WebSocket Error'; });
       
       if (isRos) {
         await wsClient.connectCustom(wsUrl(), canvasRef);
@@ -142,11 +148,11 @@
       rtcClient.onMetrics(metrics => {
         if (rtcClient === currentClient) { rtcMetrics = metrics; actualFps = metrics.fps; }
       });
-      rtcClient.onError((err) => { streamError = err.message || 'WebRTC Error'; });
+      rtcClient.onError((err) => { if (rtcClient === currentClient) streamError = err.message || 'WebRTC Error'; });
       try {
         await rtcClient.connect(webrtcOfferUrl(), videoRef, WEBRTC_TARGET_FPS);
       } catch (err: any) {
-        streamError = err.message ?? 'WebRTC failed';
+        if (rtcClient === currentClient) streamError = err.message ?? 'WebRTC failed';
       }
     }
   }
@@ -172,7 +178,7 @@
   }
 
   async function handleEdit() {
-    await teardownStream(true);
+    await teardownStream();
     config = {
       ...config,
       isConfigured: false
@@ -183,15 +189,16 @@
     if (config.isConfigured) {
       initStream();
     } else {
-      teardownStream(false);
+      teardownStream();
     }
     return () => {
-      teardownStream(false);
+      teardownStream();
     };
   });
 
   onDestroy(() => {
-    teardownStream(true);
+    destroyed = true;
+    void teardownStream();
   });
 </script>
 

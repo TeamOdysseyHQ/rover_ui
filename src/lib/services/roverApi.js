@@ -20,12 +20,19 @@ export function getApiBaseUrl() {
  */
 async function apiRequest(endpoint, options = {}) {
     const url = `${API_BASE_URL}${endpoint}`;
-    
+    const { timeoutMs, ...requestOptions } = options;
+    let signal = options.signal;
+    if (timeoutMs) {
+        const deadline = AbortSignal.timeout(timeoutMs);
+        signal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    }
     try {
         const response = await fetch(url, {
-            ...options,
+            ...requestOptions,
+            // Polling deadlines are explicit so camera discovery/report requests can take longer.
+            signal,
             headers: {
-                'Content-Type': 'application/json',
+                ...(typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
                 ...options.headers
             }
         });
@@ -185,8 +192,8 @@ export async function subscribeMotorRpms() {
 /**
  * Get latest motor RPM data
  */
-export async function getMotorRpms() {
-    return apiRequest('/api/nav/ros/motor_rpms', { method: 'GET' });
+export async function getMotorRpms(signal) {
+    return apiRequest('/api/nav/ros/motor_rpms', { method: 'GET', signal, timeoutMs: 5000 });
 }
 
 // ============================================
@@ -646,8 +653,8 @@ export async function stopCameraWebRtc(cameraName) {
 /**
  * Get WebRTC status for a specific hardware camera
  */
-export async function getCameraWebRtcStatus(cameraName) {
-    return apiRequest(`/api/nav/cameras/${cameraName}/webrtc/status`, { method: 'GET' });
+export async function getCameraWebRtcStatus(cameraName, signal) {
+    return apiRequest(`/api/nav/cameras/${cameraName}/webrtc/status`, { method: 'GET', signal, timeoutMs: 5000 });
 }
 
 /**
@@ -859,8 +866,8 @@ export async function captureMicroscopeImage(metadata, expeditionId = null) {
 /**
  * Get ROS connection status
  */
-export async function getRosStatus() {
-    return apiRequest('/api/ros/status', { method: 'GET' });
+export async function getRosStatus(signal) {
+    return apiRequest('/api/ros/status', { method: 'GET', signal, timeoutMs: 5000 });
 }
 
 /**

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { pollEvery } from '$lib/services/polling.js';
 	import { Wifi, WifiOff, RefreshCw, Activity } from '@lucide/svelte';
 	import { rosStatus, isRosConnected, checkRosStatus, connectToRos, disconnectFromRos } from '$lib/stores/rosStore';
 	import * as Card from '$lib/components/ui/card';
@@ -9,15 +10,7 @@
 	
 	// Auto-check status with cleanup
 	$effect(() => {
-		// Initial check
-		checkRosStatus();
-		
-		// Check status every 5 seconds
-		const interval = setInterval(() => {
-			checkRosStatus();
-		}, 5000);
-		
-		return () => clearInterval(interval);
+		return pollEvery(signal => checkRosStatus(signal), 5000);
 	});
 	
 	async function handleConnect() {
