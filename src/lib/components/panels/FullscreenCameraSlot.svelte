@@ -112,9 +112,8 @@
         const started = await startCamera(selectedCamera, width, height, profile.fps, profile.pixelFormat);
         if (!current()) return;
         streamFps = started.camera?.fps > 0 ? Math.min(profile.fps, started.camera.fps) : profile.fps;
-        // Give backend a short moment to initialize capture before attaching clients.
-        await new Promise((resolve) => setTimeout(resolve, 150));
       } catch (e: any) {
+		if (!current()) return;
         streamError = 'Failed to start camera: ' + e.message;
         console.error(streamError);
         return;
@@ -135,10 +134,11 @@
       });
       wsClient.onError((err) => { if (wsClient === currentClient) streamError = err.message || 'WebSocket Error'; });
       
-      if (isRos) {
-        await wsClient.connectCustom(wsUrl(), canvasRef);
-      } else {
-        await wsClient.connect(selectedCamera, canvasRef);
+      try {
+        if (isRos) await currentClient.connectCustom(wsUrl(), canvasRef);
+        else await currentClient.connect(selectedCamera, canvasRef);
+      } catch (err: any) {
+        if (current() && wsClient === currentClient) streamError = err.message || 'WebSocket failed';
       }
       
     } else if (config.streamType === 'webrtc') {

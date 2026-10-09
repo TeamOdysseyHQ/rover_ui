@@ -29,6 +29,7 @@
 	let gameInterval: ReturnType<typeof setInterval> | null = null;
 	let lastGamePublish = 0;
 	let gameUrl = '';
+	let classicUrl = '';
 	const gameSender = new DriveCommandQueue(async (command) => {
 		if (command.url !== $roverApiUrl) throw new Error('Rover connection changed');
 		if (command.mode === 'ros') {
@@ -40,6 +41,7 @@
 		}
 	}, (error, command) => {
 		gameDrive.stop();
+		clearClassicMotion();
 		syncGameState();
 		driveError = `Drive command failed: ${error.message}. Motion cleared; check the rover before retrying.`;
 		// Best effort emergency stop after a failed movement request; no retry loop.
@@ -92,7 +94,14 @@
 	}
 
 	function gameSafetyStop() {
-		if (gameControls) void stopGame();
+		if (gameControls) { void stopGame(); return; }
+		if (controlMode === 'ros' && (linearVelocity !== 0 || angularVelocity !== 0 || rosPublishInterval)) {
+			for (const key of activeRosKeys) gameDrive.blocked.add(key);
+			void stopRosMovement();
+		} else if (controlMode === 'arduino' && (arduinoSpeed !== 0 || activeArduinoKey)) {
+			if (activeArduinoKey) gameDrive.blocked.add(activeArduinoKey);
+			void stopArduinoMovement();
+		}
 	}
 
 	function handleVisibilityChange() { if (document.hidden) gameSafetyStop(); }
@@ -115,7 +124,7 @@
 		// Subscribe to connection identity as well as status; never carry cruise to another rover.
 		const url = $roverApiUrl;
 		const connected = $apiStatus === 'connected' && (controlMode === 'ros' ? $isRosConnected : arduinoConnected);
-		if (gameControls && !connected) untrack(gameSafetyStop);
+		if (!connected) untrack(gameSafetyStop);
 		return () => untrack(gameSafetyStop);
 	});
 	
@@ -202,13 +211,8 @@
 	
 	// Publish ROS twist message with current velocities
 	function publishRosTwist() {
-		if (!$isRosConnected) return;
-		
-		publishCmdVel(linearVelocity, angularVelocity);
-		logCommand({ 
-			type: 'WASD_VELOCITY', 
-			data: { linear: linearVelocity, angular: angularVelocity } 
-		}, 'sent');
+		if (!$isRosConnected || $apiStatus !== 'connected') { gameSafetyStop(); return; }
+		return gameSender.submit({ linear: linearVelocity, angular: angularVelocity, mode: 'ros', url: classicUrl || $roverApiUrl });
 	}
 	
 	// Increment velocity in discrete steps
@@ -244,17 +248,12 @@
 	
 	// Arduino mode: Send speed command with direction
 	async function sendArduinoSpeedCommand() {
-		if (!arduinoConnected || !activeArduinoKey) return;
+		if (!arduinoConnected || $apiStatus !== 'connected' || !activeArduinoKey) return;
 		
 		const direction = activeArduinoKey.toLowerCase();
 		const speedValue = arduinoSpeed;
 		
 		try {
-			// Send command as: "w:255" or "s:120", etc.
-			const command = `${direction}:${speedValue}`;
-			await sendArduinoCommand(command);
-			logCommand({ type: 'ARDUINO_SPEED', data: { direction, speed: speedValue } }, 'sent');
-			
 			// Mirror to commanded velocity store
 			const normalised = speedValue / 255;
 			const linMap: Record<string, number> = { w: normalised, s: -normalised, a: 0, d: 0 };
@@ -269,6 +268,7 @@
 				'd': 'Right'
 			};
 			movementDesc = `${descriptions[direction] || 'Moving'} (${speedValue})`;
+			await gameSender.submit({ linear: linMap[direction] ?? 0, angular: angMap[direction] ?? 0, mode: 'arduino', url: classicUrl || $roverApiUrl });
 		} catch (error: any) {
 			console.error('Arduino speed command failed:', error);
 			logCommand({ type: 'ARDUINO_SPEED', data: { direction, speed: speedValue } }, 'error', error.message);
@@ -301,6 +301,7 @@
 		arduinoSpeed = 0;
 		activeArduinoKey = '';
 		movementDesc = 'Stopped';
+		commandedVelocity.set({ linear: 0, angular: 0 });
 		
 		if (arduinoSpeedInterval) {
 			clearInterval(arduinoSpeedInterval);
@@ -309,7 +310,7 @@
 		
 		try {
 			// Send stop command (speed 0)
-			await sendArduinoCommand('x:0');
+			await gameSender.submit({ linear: 0, angular: 0, mode: 'arduino', url: classicUrl || $roverApiUrl });
 			logCommand({ type: 'ARDUINO_STOP' }, 'sent');
 		} catch (error: any) {
 			console.error('Arduino stop failed:', error);
@@ -326,6 +327,8 @@
 			gameControls = false;
 		}
 		const newMode = controlMode === 'ros' ? 'arduino' : 'ros';
+		// Stop the old mode before waiting for a new controller to connect.
+		if (controlMode === 'ros' && (linearVelocity !== 0 || angularVelocity !== 0 || rosPublishInterval)) await stopRosMovement();
 		
 		if (newMode === 'arduino') {
 			// Connect to Arduino
@@ -362,11 +365,10 @@
 
 	function handleKeyDown(e: KeyboardEvent) {
 		if (gameControls) { handleGameKeyDown(e); return; }
-		if (switchingControls || gameDrive.blocked.has(e.key.toLowerCase())) return;
-		// Ignore if typing in an input
-		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-			return;
-		}
+		if (switchingControls || driveError || gameDrive.blocked.has(e.key.toLowerCase())) return;
+		if (isTypingTarget(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+		if ($apiStatus !== 'connected' || !(controlMode === 'ros' ? $isRosConnected : arduinoConnected)) { gameSafetyStop(); return; }
+		classicUrl = $roverApiUrl;
 		
 		const key = e.key.toLowerCase();
 		
@@ -417,6 +419,7 @@
 			// Start velocity ramping if not already active for this key
 			if (!activeRosKeys.has(key)) {
 				activeRosKeys.add(key);
+				activeRosKeys = new Set(activeRosKeys);
 				const keyConfig = rosWasdKeys[key];
 				
 				// Immediately increment once
@@ -431,6 +434,7 @@
 				
 				// Start continuous publishing if not already running
 				if (!rosPublishInterval) {
+						void publishRosTwist();
 					rosPublishInterval = setInterval(publishRosTwist, publishRate);
 				}
 			}
@@ -451,10 +455,6 @@
 			return;
 		}
 		gameDrive.keyUp(e.key, performance.now());
-		// Ignore if typing in an input
-		if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-			return;
-		}
 		
 		const key = e.key.toLowerCase();
 		
@@ -474,6 +474,7 @@
 		// ROS mode: Stop velocity ramping for this key
 		if (key in rosWasdKeys && activeRosKeys.has(key)) {
 			activeRosKeys.delete(key);
+			activeRosKeys = new Set(activeRosKeys);
 			
 			// Clear the interval for this key
 			const intervalId = rosKeyIntervals.get(key);
@@ -493,10 +494,11 @@
 	}
 	
 	// Stop ROS movement (set velocities to zero)
-	function stopRosMovement() {
+	function clearClassicMotion() {
 		linearVelocity = 0;
 		angularVelocity = 0;
 		activeRosKeys.clear();
+		activeRosKeys = new Set(activeRosKeys);
 		movementDesc = 'Stopped';
 		
 		// Clear all key intervals
@@ -510,13 +512,22 @@
 			clearInterval(rosPublishInterval);
 			rosPublishInterval = null;
 		}
+		if (arduinoSpeedInterval) clearInterval(arduinoSpeedInterval);
+		arduinoSpeedInterval = null;
+		arduinoSpeed = 0;
+		activeArduinoKey = '';
+		commandedVelocity.set({ linear: 0, angular: 0 });
+	}
+
+	function stopRosMovement() {
+		clearClassicMotion();
 		
 		// Send stop command
 		if ($isRosConnected) {
-			publishCmdVel(0, 0);
 			logCommand({ type: 'WASD_STOP' }, 'sent');
+			return gameSender.submit({ linear: 0, angular: 0, mode: 'ros', url: classicUrl || $roverApiUrl });
 		}
-		commandedVelocity.set({ linear: 0, angular: 0 });
+		return Promise.resolve();
 	}
 	
 	// Legacy stopMovement for compatibility (calls stopRosMovement)
@@ -576,6 +587,7 @@
 	});
 	
 	onDestroy(() => {
+		if (typeof window === 'undefined') return;
 		gameSafetyStop();
 		if (gameInterval) clearInterval(gameInterval);
 		window.removeEventListener('blur', gameSafetyStop);
@@ -603,8 +615,7 @@
 		
 		// Disconnect Arduino on unmount if connected
 		if (controlMode === 'arduino' && arduinoConnected) {
-			stopArduinoMovement().catch(console.error);
-			disconnectArduino().catch(console.error);
+			void stopArduinoMovement().then(() => disconnectArduino()).catch(console.error);
 		}
 	});
 </script>
@@ -660,7 +671,7 @@
 				<p class="text-xs text-muted-foreground">Leaving this window or focusing a text field stops motion and clears the lock.</p>
 				{#if controlMode === 'arduino'}<p class="text-xs text-muted-foreground">Arduino supports one direction at a time. L is reserved for cruise lock here; use Classic controls for IJKL camera keys.</p>{/if}
 			{:else}
-				<p class="text-xs text-muted-foreground">Original step controls: releasing a key keeps the current speed; Space stops.</p>
+				<p class="text-xs text-muted-foreground">Step controls: releasing a key keeps the current speed; Space stops. Leaving this window, editing a field or losing the connection clears motion.</p>
 			{/if}
 			{#if driveError}<p role="alert" class="text-xs text-destructive">{driveError} Toggle Game controls off and on to re-arm.</p>{/if}
 		</div>

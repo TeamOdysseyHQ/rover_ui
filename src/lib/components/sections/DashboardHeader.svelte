@@ -48,13 +48,9 @@
 		<p class="text-sm text-sky-400 font-medium mb-3">{getMissionName(activeMission)}</p>
 		<div class="flex items-center gap-4 text-sm">
 			<div class="flex items-center gap-2">
-				<span class="text-muted-foreground font-medium">STATUS:</span>
-				<Badge variant="success">NOMINAL</Badge>
-			</div>
-			<div class="flex items-center gap-2">
-				<span class="text-muted-foreground font-medium">LINK:</span>
+				<span class="text-muted-foreground font-medium">API:</span>
 				<Badge variant={$apiStatus === 'connected' ? 'success' : 'destructive'}>
-					{$apiStatus === 'connected' ? 'CONNECTED' : 'OFFLINE'}
+					{$apiStatus.toUpperCase()}
 				</Badge>
 			</div>
 			<span class="text-muted-foreground font-mono text-xs">{formatTime(currentTime)}</span>

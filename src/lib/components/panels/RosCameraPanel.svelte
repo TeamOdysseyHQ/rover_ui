@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
+	import { apiStatus, roverApiUrl } from '$lib/stores/apiStore';
+	import { pollEvery } from '$lib/services/polling.js';
 	import * as api from '$lib/services/roverApi.js';
 	import { VideoStreamClient, WebRtcStreamClient, type StreamMetrics } from '$lib/services/videoStreamService';
 	import { cn } from '$lib/utils';
@@ -42,9 +44,13 @@
 	let webrtcClient = $state<WebRtcStreamClient | null>(null);
 	let videoRef = $state<HTMLVideoElement | undefined>();
 	let webrtcStatus = $state<{ active_connections: number; max_connections: number } | null>(null);
-	let webrtcStatusInterval: ReturnType<typeof setInterval> | null = null;
+	let webrtcStatusInterval: (() => void) | null = null;
 	let webrtcRetryTimer: ReturnType<typeof setTimeout> | null = null;
 	let webrtcRetryCount = 0;
+	let mounted = false;
+	let lifecycleEpoch = 0;
+	let rtcState = $state('disconnected');
+	let rtcFps = $state(0);
 
 	// ─── helpers ──────────────────────────────────────────────────────────────
 
@@ -65,13 +71,14 @@
 	// ─── WebSocket ────────────────────────────────────────────────────────────
 
 	function startWebSocketStream() {
+		if (!mounted || !isSubscribed || streamingMode !== 'websocket' || wsClient) return;
 		if (!canvasRef) { error = 'Canvas element not ready'; return; }
 		const client = new VideoStreamClient({ quality: 85, fps: 30, autoReconnect: true });
-		client.onMetrics((m) => { metrics = m; });
+		client.onMetrics((m) => { if (wsClient === client) metrics = m; });
 		client.onStateChange((s) => console.log(`[RosCameraPanel] WS state: ${s}`));
-		client.onError((e) => { error = `WebSocket error: ${e.message}`; });
+		client.onError((e) => { if (wsClient === client) error = `WebSocket error: ${e.message}`; });
 		const wsUrl = api.getRosCameraWebSocketUrl(85, 30);
-		client.connectCustom(wsUrl, canvasRef).catch((e) => { error = `Failed to connect WebSocket: ${e.message}`; });
+		client.connectCustom(wsUrl, canvasRef).catch((e) => { if (wsClient === client) error = `Failed to connect WebSocket: ${e.message}`; });
 		wsClient = client;
 	}
 
@@ -82,20 +89,33 @@
 	// ─── WebRTC ───────────────────────────────────────────────────────────────
 
 	function startWebRtcStream() {
+		if (!mounted || !isSubscribed || streamingMode !== 'webrtc' || webrtcClient) return;
 		if (!videoRef) { error = 'Video element not ready'; return; }
 		if (webrtcRetryTimer) { clearTimeout(webrtcRetryTimer); webrtcRetryTimer = null; }
 
 		const client = new WebRtcStreamClient();
-		client.onStateChange((s) => console.log(`[RosCameraPanel] WebRTC state: ${s}`));
-		client.onError((e) => console.error(`[RosCameraPanel] WebRTC error:`, e));
+		webrtcClient = client;
+		rtcState = 'connecting';
+		rtcFps = 0;
+		client.onStateChange((s) => { if (webrtcClient === client) { rtcState = s; if (s !== 'connected') rtcFps = 0; } });
+		client.onMetrics(m => { if (webrtcClient === client) rtcFps = m.fps; });
+		client.onError(e => handleWebRtcFailure(client, e));
 
 		const offerUrl = `${api.getApiBaseUrl()}/api/nav/ros/camera/webrtc/offer`;
 		client.connect(offerUrl, videoRef).then(() => {
 			if (webrtcClient !== client) return;
 			webrtcRetryCount = 0;
 			startWebRtcStatusPolling();
-		}).catch((err: Error & { status?: number }) => {
-			if (err.name === 'AbortError' || webrtcClient !== client) return;
+		}).catch(err => handleWebRtcFailure(client, err));
+	}
+
+	function handleWebRtcFailure(client: WebRtcStreamClient, err: Error & { status?: number }) {
+			if (err.name === 'AbortError' || webrtcClient !== client || !mounted) return;
+			webrtcClient = null;
+			rtcState = 'error';
+			rtcFps = 0;
+			stopWebRtcStatusPolling();
+			void client.disconnect().catch(() => {});
 			if (err.status === 429) {
 				error = 'Too many viewers — falling back to MJPEG';
 				setStreamingMode('mjpeg');
@@ -105,9 +125,10 @@
 				webrtcRetryCount++;
 				if (webrtcRetryCount <= 5) {
 					const delay = Math.min(5000 * Math.pow(2, webrtcRetryCount - 1), 60000);
-					error = `Stream error — retrying in ${delay / 1000}s`;
+					error = `${err.message}. Retrying in ${delay / 1000}s`;
 					webrtcRetryTimer = setTimeout(() => {
-						if (isSubscribed && streamingMode === 'webrtc') startWebRtcStream();
+						webrtcRetryTimer = null;
+						if (mounted && isSubscribed && streamingMode === 'webrtc') startWebRtcStream();
 					}, delay);
 				} else {
 					error = 'WebRTC failed — falling back to MJPEG';
@@ -116,9 +137,6 @@
 			} else {
 				error = err.message;
 			}
-			webrtcClient = null;
-		});
-		webrtcClient = client;
 	}
 
 	async function stopWebRtcStream() {
@@ -127,6 +145,8 @@
 		webrtcRetryCount = 0;
 		const client = webrtcClient;
 		webrtcClient = null;
+		rtcState = 'disconnected';
+		rtcFps = 0;
 		stopWebRtcStatusPolling();
 		webrtcStatus = null;
 		await client?.disconnect();
@@ -134,9 +154,10 @@
 
 	function startWebRtcStatusPolling() {
 		stopWebRtcStatusPolling();
-		webrtcStatusInterval = setInterval(async () => {
+		webrtcStatusInterval = pollEvery(async signal => {
 			try {
-				const st = await api.getRosCameraWebRtcStatus();
+				const st = await api.getRosCameraWebRtcStatus(signal);
+				if (signal.aborted || !mounted) return;
 				webrtcStatus = { active_connections: st.active_connections, max_connections: st.max_connections ?? 5 };
 				// Capacity limits new offers, not viewers already connected.
 			} catch { /* ignore */ }
@@ -144,42 +165,55 @@
 	}
 
 	function stopWebRtcStatusPolling() {
-		if (webrtcStatusInterval) { clearInterval(webrtcStatusInterval); webrtcStatusInterval = null; }
+		if (webrtcStatusInterval) { webrtcStatusInterval(); webrtcStatusInterval = null; }
 	}
 
 	// ─── subscribe / unsubscribe ───────────────────────────────────────────────
 
 	async function subscribe() {
+		if (!mounted || isLoading || isSubscribed) return;
+		const epoch = lifecycleEpoch;
 		isLoading = true;
 		error = null;
 		try {
 			const response = await api.subscribeToRosCamera(topicName);
+			if (!mounted || epoch !== lifecycleEpoch) return;
 			if (!response.success) {
 				error = response.message || 'Failed to subscribe to camera topic';
 				return;
 			}
 			isSubscribed = true;
+			await tick();
+			if (!mounted || epoch !== lifecycleEpoch) return;
 			if (streamingMode === 'mjpeg') {
 				imgSrc = getMjpegUrl();
 			} else if (streamingMode === 'websocket') {
-				setTimeout(() => startWebSocketStream(), 50);
+				startWebSocketStream();
 			} else {
-				setTimeout(() => startWebRtcStream(), 50);
+				startWebRtcStream();
 			}
 		} catch (err) {
+			if (!mounted || epoch !== lifecycleEpoch) return;
 			console.error('Error subscribing to ROS camera:', err);
 			error = err instanceof Error ? err.message : 'Failed to subscribe';
 		} finally {
-			isLoading = false;
+			if (epoch === lifecycleEpoch) isLoading = false;
 		}
 	}
 
-	async function unsubscribe() {
-		stopWebSocketStream();
-		await stopWebRtcStream();
-		try { await api.unsubscribeFromRosCamera(topicName); } catch { /* ignore */ }
+	function releaseLocalStreams() {
+		lifecycleEpoch++;
 		isSubscribed = false;
+		isLoading = false;
 		imgSrc = '';
+		if (mjpegDebounceTimer) clearTimeout(mjpegDebounceTimer);
+		stopWebSocketStream();
+		return stopWebRtcStream();
+	}
+
+	async function unsubscribe() {
+		await releaseLocalStreams();
+		try { await api.unsubscribeFromRosCamera(topicName); } catch { /* ignore */ }
 	}
 
 	async function setStreamingMode(newMode: StreamMode) {
@@ -189,17 +223,27 @@
 			if (streamingMode === 'webrtc') await stopWebRtcStream();
 		}
 		streamingMode = newMode;
+		await tick();
 		if (isSubscribed) {
 			if (newMode === 'mjpeg') imgSrc = getMjpegUrl();
-			else if (newMode === 'websocket') setTimeout(() => startWebSocketStream(), 50);
-			else setTimeout(() => startWebRtcStream(), 50);
+			else if (newMode === 'websocket') startWebSocketStream();
+			else startWebRtcStream();
 		}
 	}
 
 	// ─── lifecycle ────────────────────────────────────────────────────────────
 
+	$effect(() => {
+		const url = $roverApiUrl;
+		const connected = $apiStatus === 'connected';
+		if (connected) untrack(() => { if (mounted && autoSubscribe) void subscribe(); });
+		else untrack(() => { void releaseLocalStreams(); });
+		return () => untrack(() => { void releaseLocalStreams(); });
+	});
+
 	onMount(() => {
-		if (autoSubscribe) subscribe();
+		mounted = true;
+		if (autoSubscribe && $apiStatus === 'connected') void subscribe();
 		const handleUnload = () => {
 			if (webrtcClient) {
 				webrtcClient.disconnect(`${api.getApiBaseUrl()}/api/nav/ros/camera/webrtc`).catch(() => {});
@@ -207,8 +251,9 @@
 		};
 		window.addEventListener('beforeunload', handleUnload);
 		return () => {
+			mounted = false;
 			window.removeEventListener('beforeunload', handleUnload);
-			if (isSubscribed) unsubscribe();
+			void releaseLocalStreams();
 		};
 	});
 </script>
@@ -323,7 +368,7 @@
 					class="h-full w-full object-contain"
 				/>
 				<div class="absolute top-2 left-2 bg-red-700 text-white text-xs px-2 py-1 rounded font-mono">
-					LIVE MJPEG
+					MJPEG stream
 				</div>
 			{:else if streamingMode === 'websocket'}
 				<canvas
@@ -333,7 +378,7 @@
 					class="h-full w-full object-contain"
 				></canvas>
 				<div class="absolute top-2 left-2 bg-sky-600 text-white text-xs px-2 py-1 rounded font-mono">
-					LIVE WS
+					{metrics?.connected && metrics.fps > 0 ? 'LIVE WS' : 'WS · waiting for frames'}
 				</div>
 			{:else if streamingMode === 'webrtc'}
 				<!-- svelte-ignore a11y_media_has_caption -->
@@ -345,7 +390,7 @@
 					class="h-full w-full object-contain"
 				></video>
 				<div class="absolute top-2 left-2 bg-green-600 text-white text-xs px-2 py-1 rounded font-mono">
-					LIVE WebRTC
+					{rtcState === 'connected' && rtcFps > 0 ? `LIVE WebRTC · ${rtcFps.toFixed(1)} FPS` : `WebRTC · ${rtcState === 'connected' ? 'waiting for frames' : rtcState}`}
 				</div>
 			{/if}
 		{:else}

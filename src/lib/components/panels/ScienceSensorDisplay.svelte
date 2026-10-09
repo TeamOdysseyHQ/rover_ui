@@ -4,6 +4,9 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Loader2, RefreshCw, Thermometer, Droplet, Gauge, Mountain, Wind, Beaker, TestTube } from '@lucide/svelte';
 	import { getScienceSensorData } from '$lib/services/roverApi';
+	import { apiStatus, roverApiUrl } from '$lib/stores/apiStore';
+	import { pollEvery } from '$lib/services/polling.js';
+	import { untrack } from 'svelte';
 
 	// Props
 	let { autoRefresh = true }: { autoRefresh?: boolean } = $props();
@@ -28,15 +31,22 @@
 	let distance = $derived(sensorData?.vl53lox ?? null);
 	let gps = $derived(sensorData?.gps || 'N/A');
 
-	// Polling interval
-	let pollInterval: number | null = null;
+	let stopPoll: (() => void) | null = null;
+	let activeRead: AbortController | null = null;
+	let readEpoch = 0;
 
-	async function fetchSensorData() {
+	async function fetchSensorData(signal?: AbortSignal) {
+		if ($apiStatus !== 'connected' || activeRead || signal?.aborted) return;
+		const controller = new AbortController();
+		activeRead = controller;
+		const epoch = readEpoch;
+		const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
 		isLoading = true;
 		errorMessage = '';
 
 		try {
-			const result = await getScienceSensorData();
+			const result = await getScienceSensorData(requestSignal);
+			if (requestSignal.aborted || epoch !== readEpoch) return;
 			if (result.success && result.data) {
 				sensorData = result.data;
 				lastUpdated = new Date();
@@ -44,40 +54,33 @@
 				errorMessage = result.message || 'Failed to fetch sensor data';
 			}
 		} catch (error) {
+			if (requestSignal.aborted || epoch !== readEpoch) return;
 			errorMessage = 'Error fetching sensor data';
 			console.error(error);
 		} finally {
-			isLoading = false;
+			if (activeRead === controller) { activeRead = null; isLoading = false; }
 		}
 	}
 
 	function startAutoRefresh() {
-		if (pollInterval) return;
-		fetchSensorData(); // Immediate fetch
-		pollInterval = window.setInterval(fetchSensorData, 2000); // Every 2 seconds
+		if (stopPoll || $apiStatus !== 'connected') return;
+		stopPoll = pollEvery(signal => fetchSensorData(signal), 2000);
 	}
 
 	function stopAutoRefresh() {
-		if (pollInterval) {
-			clearInterval(pollInterval);
-			pollInterval = null;
-		}
+		readEpoch++;
+		stopPoll?.(); stopPoll = null;
+		activeRead?.abort(); activeRead = null;
+		isLoading = false;
 	}
-
-	// Cleanup on unmount
-	$effect(() => {
-		return () => {
-			stopAutoRefresh();
-		};
-	});
 
 	// Auto-refresh control
 	$effect(() => {
-		if (autoRefresh) {
-			startAutoRefresh();
-		} else {
-			stopAutoRefresh();
-		}
+		const url = $roverApiUrl;
+		const connected = $apiStatus === 'connected';
+		const refresh = autoRefresh && connected;
+		untrack(() => { if (refresh) startAutoRefresh(); else stopAutoRefresh(); });
+		return () => untrack(stopAutoRefresh);
 	});
 
 	function formatValue(value: number | null, unit: string, decimals: number = 1): string {
@@ -90,7 +93,7 @@
 	<Card.Header class="border-b border-border">
 		<div class="flex items-center justify-between">
 			<Card.Title>Science Sensor Data</Card.Title>
-			<Button variant="ghost" size="sm" onclick={fetchSensorData} disabled={isLoading}>
+			<Button variant="ghost" size="sm" onclick={() => fetchSensorData()} disabled={isLoading || $apiStatus !== 'connected'}>
 				{#if isLoading}
 					<Loader2 class="w-4 h-4 animate-spin" />
 				{:else}
@@ -109,7 +112,7 @@
 			<div class="empty-state">
 				<TestTube class="w-8 h-8 text-slate-600" />
 				<span class="text-sm text-slate-400">No sensor data available</span>
-				<Button variant="outline" size="sm" onclick={fetchSensorData}>
+				<Button variant="outline" size="sm" onclick={() => fetchSensorData()} disabled={isLoading || $apiStatus !== 'connected'}>
 					Fetch Data
 				</Button>
 			</div>

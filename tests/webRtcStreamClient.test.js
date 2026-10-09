@@ -132,6 +132,28 @@ test('transport failure after negotiation notifies the consumer and closes the p
     assert.equal(peers[0].closed, true);
 });
 
+test('temporary ICE disconnect can recover; a persistent disconnect releases the frozen peer', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const errors = [];
+    const client = new WebRtcStreamClient();
+    client.onError(error => errors.push(error));
+    const pending = client.connect(offerUrl, { srcObject: null });
+    await settle(); peers[0].changeState('connected'); await pending;
+    peers[0].changeState('disconnected');
+    t.mock.timers.tick(4000);
+    peers[0].changeState('connected');
+    t.mock.timers.tick(2000);
+    assert.equal(errors.length, 0);
+    assert.equal(client.getState(), 'connected');
+    peers[0].changeState('disconnected');
+    t.mock.timers.tick(5000);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0].message, /disconnected for 5 seconds/);
+    assert.equal(client.getState(), 'error');
+    assert.equal(peers[0].closed, true);
+    await client.disconnect();
+});
+
 test('an old cancelled attempt cannot change a replacement connection', async (t) => {
     let resolveOld;
     const fetch = t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ type: 'answer', sdp: 'answer' }) }));
@@ -203,6 +225,8 @@ test('advertised adaptive backend receives interval feedback; disconnect stops p
     const feedback = calls.find(call => call.url.endsWith('/feedback'));
     assert.equal(JSON.parse(feedback.options.body).received_fps, 30);
     assert.equal(metrics[0].scale, 1, 'FPS is delivered before the feedback response');
+    t.mock.timers.tick(2000);
+    await settle();
     assert.equal(metrics.at(-1).scale, 0.85);
     assert.equal(metrics[0].targetFps, 60);
     await client.disconnect();
@@ -236,5 +260,46 @@ test('slow feedback cannot block measured FPS delivery', async t => {
     t.mock.timers.tick(2000); await settle();
     assert.equal(feedbackPending, true);
     assert.equal(samples[0].fps, 24);
+    t.mock.timers.tick(2000); await settle();
+    assert.equal(samples.length, 2, 'the next stats sample must arrive while feedback is pending');
+    assert.equal(samples[1].fps, 24);
+    await client.disconnect();
+});
+
+test('late feedback body cannot overwrite newer FPS or create a feedback backlog', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let finishFeedback;
+    let feedbackRequests = 0;
+    t.mock.method(globalThis, 'fetch', async url => {
+        if (url.endsWith('/feedback')) {
+            feedbackRequests++;
+            return { ok: true, json: () => new Promise(resolve => { finishFeedback = resolve; }) };
+        }
+        return { ok: true, json: async () => ({ type: 'answer', sdp: 'answer', peer_id: 'late', adaptive_quality: true }) };
+    });
+    let n = 0;
+    FakePeer.prototype.getStats = async () => {
+        const sample = n++;
+        return new Map([['video', {
+            id: 'video', type: 'inbound-rtp', kind: 'video', timestamp: sample * 2000,
+            framesDecoded: sample < 2 ? sample * 48 : 60,
+            bytesReceived: sample * 1000, packetsReceived: sample * 24,
+        }]]);
+    };
+    t.after(() => delete FakePeer.prototype.getStats);
+    const samples = [];
+    const client = new WebRtcStreamClient();
+    client.onMetrics(value => samples.push(value));
+    const pending = client.connect(offerUrl, { srcObject: null });
+    await settle(); peers[0].changeState('connected'); await pending; await settle();
+    t.mock.timers.tick(2000); await settle();
+    t.mock.timers.tick(2000); await settle();
+    assert.equal(feedbackRequests, 1);
+    assert.equal(samples.at(-1).fps, 6);
+    const count = samples.length;
+    finishFeedback({ scale: 0.75 }); await settle();
+    assert.equal(samples.length, count, 'quality feedback must not re-emit an old stats sample');
+    t.mock.timers.tick(2000); await settle();
+    assert.equal(samples.at(-1).scale, 0.75);
     await client.disconnect();
 });

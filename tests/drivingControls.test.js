@@ -147,3 +147,66 @@ test('Arduino Game mode sends bounded single-axis commands and reserves L for lo
     h.handleKeyDown(key('q')); await settle();
     assert.equal(sent.at(-1).command, 'x:0');
 });
+
+test('Classic motion clears on blur, hidden page, editing, disconnect and teardown', async () => {
+    for (const mode of ['ros', 'arduino']) for (const action of ['blur', 'hidden', 'editing', 'disconnect', 'teardown']) {
+        const { h, context, advance, key, effects, destroys, sent, settle } = setup();
+        if (mode === 'arduino') await h.toggleControlMode();
+        h.handleKeyDown(key('w')); await advance(400);
+        if (action === 'blur') h.gameSafetyStop();
+        if (action === 'hidden') { context.document.hidden = true; h.handleVisibilityChange(); }
+        if (action === 'editing') h.handleFocusIn({ target: { closest: () => ({}) } });
+        if (action === 'disconnect') { context.$apiStatus = 'disconnected'; effects.forEach(fn => fn()); }
+        if (action === 'teardown') destroys.forEach(fn => fn());
+        await settle();
+        const stoppedAt = sent.length;
+        await advance(400);
+        assert.equal(h.state().linearVelocity, 0, `${mode}: ${action}`);
+        assert.equal(sent.length, stoppedAt, `${mode}: ${action} leaves no publishing/ramping timer`);
+        assert.ok(sent.some(command => mode === 'ros' ? command.linear === 0 : command.command === 'x:0'));
+    }
+});
+
+test('Classic ignores editable fields and modified keyboard shortcuts', async () => {
+    for (const extras of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }, { target: { closest: () => ({}) } }]) {
+        const { h, advance, key, sent } = setup();
+        h.handleKeyDown(key('w', extras)); await advance(300);
+        assert.equal(h.state().linearVelocity, 0); assert.equal(sent.length, 0);
+    }
+});
+
+test('Classic safety stop requires a held key to be released before rearming', async () => {
+    const { h, advance, key } = setup();
+    h.handleKeyDown(key('w')); await advance(300); h.gameSafetyStop();
+    h.handleKeyDown(key('w', { repeat: true })); await advance(300);
+    assert.equal(h.state().linearVelocity, 0);
+    h.handleKeyUp(key('w', { target: { closest: () => ({}) } }));
+    h.handleKeyDown(key('w')); await advance(200);
+    assert.ok(h.state().linearVelocity > 0);
+});
+
+test('Classic sends first input immediately and stops ROS before awaiting Arduino connection', async () => {
+    const { h, context, key, sent, settle } = setup();
+    h.handleKeyDown(key('w')); await settle();
+    assert.ok(sent[0].linear > 0);
+    let connecting = false;
+    context.connectArduino = async () => { connecting = true; assert.equal(sent.at(-1).linear, 0); };
+    await h.toggleControlMode();
+    assert.equal(connecting, true);
+});
+
+test('Classic coalesces delayed movement and preserves a stop before any fresh input', async () => {
+    const { h, context, advance, key, sent, settle } = setup();
+    let resolveSend;
+    context.publishCmdVel = (linear, angular) => {
+        sent.push({ linear, angular });
+        return new Promise(resolve => { resolveSend = resolve; });
+    };
+    h.handleKeyDown(key('w')); await advance(400);
+    assert.equal(sent.length, 1, 'only one movement request in flight');
+    h.gameSafetyStop(); resolveSend(); await settle();
+    assert.equal(sent.length, 2);
+    assert.deepEqual(sent.at(-1), { linear: 0, angular: 0 });
+    resolveSend(); await settle(); await advance(300);
+    assert.equal(sent.length, 2, 'no stale movement follows stop');
+});

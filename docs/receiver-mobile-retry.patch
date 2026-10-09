@@ -1,0 +1,43 @@
+--- a/receive_sensors.py
++++ b/receive_sensors.py
+@@ -3,25 +3,26 @@
+ import sys
+ import netifaces
+ import subprocess
++import time
+ 
+ # --- Configuration ---
+ PORT = 8989
+ CANDIDATE_HOSTS = []
+ 
+-COUNTER_CSRAL = 0
+-
+-while COUNTER_CSRAL < 11:
+-
+-	if COUNTER_CSRAL == 10:
+-		print("FFahhhh: Adb cannot work rn twn")
+-		sys.exit(1)
+-	COUNTER_CSRAL += 1
+-
+-	try:
+-		subprocess.run(["adb", "forward", "tcp:8989", "tcp:8989"], check=True)
+-		break
+-	except Exception as e:
+-		print(f"Exception: {e}")
++for attempt in range(10):
++    try:
++        subprocess.run(
++            ["adb", "forward", "tcp:8989", "tcp:8989"],
++            check=True, timeout=5, capture_output=True, text=True,
++        )
++        break
++    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
++        if attempt == 9:
++            print("Android sensor device unavailable after 10 attempts.", flush=True)
++            sys.exit(1)
++        delay = min(2 ** attempt, 5)
++        print(f"Android sensor device unavailable; retrying in {delay}s.", flush=True)
++        time.sleep(delay)
+ 
+ print("Searching for Android device...")
+ 

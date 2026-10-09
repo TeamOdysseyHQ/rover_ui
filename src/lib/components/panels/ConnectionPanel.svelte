@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Wifi, WifiOff, Power } from '@lucide/svelte';
-	import { apiStatus, roverApiUrl, testConnection, disconnectFromRover } from '$lib/stores/apiStore';
+	import { apiStatus, roverApiUrl, testConnection, disconnectFromRover, monitorConnection } from '$lib/stores/apiStore';
 	import { DEFAULT_API_URL } from '$lib/services/roverApi';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
@@ -10,6 +10,9 @@
 	
 	let isConnected = $derived($apiStatus === 'connected');
 	let hasError = $derived($apiStatus === 'error');
+	$effect(() => {
+		if ($apiStatus === 'connected') return monitorConnection();
+	});
 	
 	async function handleConnect() {
 		if (isConnected) {
@@ -51,6 +54,8 @@
 					<Badge variant="success">Connected to {$roverApiUrl}</Badge>
 				{:else if hasError}
 					<Badge variant="destructive">Connection Failed</Badge>
+				{:else if $apiStatus === 'connecting'}
+					<Badge variant="secondary">Connecting…</Badge>
 				{:else}
 					<Badge variant="secondary">Disconnected</Badge>
 				{/if}
@@ -58,6 +63,7 @@
 			<Button 
 				variant={isConnected ? 'secondary' : 'default'}
 				onclick={handleConnect}
+				disabled={$apiStatus === 'connecting'}
 			>
 				<Power class="w-4 h-4 mr-2" />
 				{isConnected ? 'Disconnect' : 'Connect'}
@@ -69,7 +75,7 @@
 				<p class="font-semibold mb-1">Setup Instructions:</p>
 				<ol class="list-decimal list-inside space-y-1">
 					<li>Start the FastAPI backend server</li>
-					<li>Enter the API URL above (default: http://localhost:6767)</li>
+					<li>Enter the API URL above (default: {DEFAULT_API_URL})</li>
 					<li>Click Connect to test the connection</li>
 				</ol>
 			</div>

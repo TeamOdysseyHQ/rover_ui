@@ -24,6 +24,9 @@
 		getDrillData,
 		getScienceWarnings
 	} from '$lib/services/roverApi';
+	import { apiStatus, roverApiUrl } from '$lib/stores/apiStore';
+	import { pollEvery } from '$lib/services/polling.js';
+	import { untrack } from 'svelte';
 
 	// Props
 	let { scienceModeEnabled = $bindable(false) }: { scienceModeEnabled?: boolean } = $props();
@@ -38,8 +41,7 @@
 	let isLoading = $state(false);
 	let statusMessage = $state('');
 
-	// Polling interval
-	let pollInterval: number | null = null;
+	let stopPoll: (() => void) | null = null;
 
 	// Toggle science mode
 	async function handleScienceModeToggle() {
@@ -167,37 +169,38 @@
 	}
 
 	// Polling for telemetry
-	async function pollTelemetry() {
+	async function pollTelemetry(signal: AbortSignal) {
+		if (signal.aborted || $apiStatus !== 'connected' || !scienceModeEnabled) return;
 		try {
-			const [drillResult, warningResult] = await Promise.all([
-				getDrillData(),
-				getScienceWarnings()
+			const [drillRead, warningRead] = await Promise.allSettled([
+				getDrillData(signal),
+				getScienceWarnings(signal)
 			]);
+			if (signal.aborted) return;
+			const drillResult = drillRead.status === 'fulfilled' ? drillRead.value : null;
+			const warningResult = warningRead.status === 'fulfilled' ? warningRead.value : null;
 
-			if (drillResult.success && drillResult.data) {
+			if (drillResult?.success && drillResult.data) {
 				drillHalted = drillResult.data.drill_halted;
 				distanceMm = drillResult.data.distance_mm;
 			}
 
-			if (warningResult.success && warningResult.data) {
+			if (warningResult?.success && warningResult.data) {
 				warningMessage = warningResult.data.warning_message || 'None';
 			}
 		} catch (error) {
+			if (signal.aborted) return;
 			console.error('Error polling telemetry:', error);
 		}
 	}
 
 	function startPolling() {
-		if (pollInterval) return;
-		pollTelemetry(); // Immediate fetch
-		pollInterval = window.setInterval(pollTelemetry, 2000); // Every 2 seconds
+		if (stopPoll || $apiStatus !== 'connected' || !scienceModeEnabled) return;
+		stopPoll = pollEvery(pollTelemetry, 2000);
 	}
 
 	function stopPolling() {
-		if (pollInterval) {
-			clearInterval(pollInterval);
-			pollInterval = null;
-		}
+		stopPoll?.(); stopPoll = null;
 	}
 
 	function setStatus(message: string) {
@@ -207,20 +210,13 @@
 		}, 3000);
 	}
 
-	// Cleanup on unmount
-	$effect(() => {
-		return () => {
-			stopPolling();
-		};
-	});
-
 	// Auto-poll if science mode is enabled
 	$effect(() => {
-		if (scienceModeEnabled) {
-			startPolling();
-		} else {
-			stopPolling();
-		}
+		const url = $roverApiUrl;
+		const connected = $apiStatus === 'connected';
+		const enabled = scienceModeEnabled && connected;
+		untrack(() => { if (enabled) startPolling(); else stopPolling(); });
+		return () => untrack(stopPolling);
 	});
 </script>
 

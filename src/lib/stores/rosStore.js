@@ -22,6 +22,7 @@ export async function checkRosStatus(signal) {
 	try {
 		const response = await api.getRosStatus(signal);
 		if (signal?.aborted) return { connected: false };
+		if (response.success !== true || typeof response.status?.connected !== 'boolean') throw new Error('Invalid ROS status response');
 		const statusData = response.status || {};
 		const connected = statusData.connected === true;
 		
@@ -38,11 +39,12 @@ export async function checkRosStatus(signal) {
 		if (signal?.aborted) return { connected: false };
 		console.error('Error checking ROS status:', error);
 		rosStatus.set({
-			status: 'disconnected',
+			status: 'unknown',
 			url: null,
 			subscribedTopics: [],
 			publishedTopics: [],
-			lastChecked: Date.now()
+			lastChecked: Date.now(),
+			error: error.message
 		});
 		return { connected: false };
 	}

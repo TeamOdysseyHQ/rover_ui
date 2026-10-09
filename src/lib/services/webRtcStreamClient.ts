@@ -12,7 +12,9 @@ type Session = {
 	deleteUrl: string | null;
 	established: boolean;
 	metricsTimer?: ReturnType<typeof setTimeout>;
+	disconnectTimer?: ReturnType<typeof setTimeout>;
 	feedbackUrl?: string;
+	feedbackPending?: boolean;
 	targetFps: number;
 	scale: number;
 };
@@ -77,6 +79,7 @@ export class WebRtcStreamClient {
 
 	private async release(session: Session): Promise<void> {
 		if (session.metricsTimer) clearTimeout(session.metricsTimer);
+		if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
 		session.pc.ontrack = null;
 		session.pc.onconnectionstatechange = null;
 		session.pc.close();
@@ -112,7 +115,11 @@ export class WebRtcStreamClient {
 			};
 			pc.onconnectionstatechange = () => {
 				if (this.session !== current) return;
-				if (pc.connectionState === 'connected') this.setState('connected');
+				if (pc.connectionState === 'connected') {
+					if (current.disconnectTimer) clearTimeout(current.disconnectTimer);
+					current.disconnectTimer = undefined;
+					this.setState('connected');
+				}
 				else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
 					const error = new Error(`WebRTC transport ${pc.connectionState}`);
 					controller.abort(error);
@@ -122,7 +129,20 @@ export class WebRtcStreamClient {
 						void this.release(current);
 						this.onErrorCallback?.(error);
 					}
-				} else if (pc.connectionState === 'disconnected') this.setState('disconnected');
+				} else if (pc.connectionState === 'disconnected') {
+					this.setState('disconnected');
+					if (current.established && !current.disconnectTimer) {
+						current.disconnectTimer = setTimeout(() => {
+							if (this.session !== current || pc.connectionState !== 'disconnected') return;
+							const error = new Error('WebRTC transport disconnected for 5 seconds');
+							controller.abort(error);
+							this.session = null;
+							this.setState('error');
+							void this.release(current);
+							this.onErrorCallback?.(error);
+						}, 5000);
+					}
+				}
 			};
 
 			pc.addTransceiver('video', { direction: 'recvonly' });
@@ -173,29 +193,28 @@ export class WebRtcStreamClient {
 	private startMetrics(session: Session): void {
 		if (typeof session.pc.getStats !== 'function') return;
 		const sampler = new WebRtcStatsSampler();
+		let statsPending = false;
 		const poll = async () => {
 			if (this.session !== session || session.controller.signal.aborted) return;
 			try {
-				const stats = await abortable(session.pc.getStats(), session.controller.signal);
+				// getStats has no native cancellation. Do not stack native calls
+				// behind a hung sample even after its timeout has expired.
+				if (statsPending) return;
+				statsPending = true;
+				let request: Promise<RTCStatsReport>;
+				try { request = session.pc.getStats(); }
+				catch (error) { statsPending = false; throw error; }
+				request.then(() => { statsPending = false; }, () => { statsPending = false; });
+				const statsSignal = AbortSignal.any([session.controller.signal, AbortSignal.timeout(1500)]);
+				const stats = await abortable(request, statsSignal);
 				if (this.session !== session) return;
 				const metrics = sampler.sample(stats);
 				if (metrics) {
 					// A slow feedback endpoint must not delay delivered-FPS updates.
 					this.onMetricsCallback?.({ ...metrics, targetFps: session.targetFps, scale: session.scale, adaptiveQuality: !!session.feedbackUrl });
 					// Hidden tabs can throttle decoding; do not downgrade the stream for that.
-					if (session.feedbackUrl && session.pc.connectionState === 'connected' && (typeof document === 'undefined' || !document.hidden)) {
-						const response = await fetch(session.feedbackUrl, {
-							method: 'POST', headers: { 'Content-Type': 'application/json' },
-							signal: AbortSignal.any([session.controller.signal, AbortSignal.timeout(3000)]),
-							body: JSON.stringify({ received_fps: metrics.fps, loss_ratio: metrics.lossRatio, jitter_ms: metrics.jitterMs, decode_ms: metrics.decodeMs }),
-						});
-						if (response.ok) {
-							const profile = await response.json();
-							if (Number.isFinite(profile.scale) && profile.scale >= 0.5 && profile.scale <= 1 && this.session === session) {
-									session.scale = profile.scale;
-									this.onMetricsCallback?.({ ...metrics, targetFps: session.targetFps, scale: session.scale, adaptiveQuality: true });
-								}
-						} else if (response.status === 404 || response.status === 405) session.feedbackUrl = undefined;
+					if (session.feedbackUrl && !session.feedbackPending && session.pc.connectionState === 'connected' && (typeof document === 'undefined' || !document.hidden)) {
+						void this.sendFeedback(session, metrics);
 					}
 				}
 			} catch (error) {
@@ -205,6 +224,28 @@ export class WebRtcStreamClient {
 			}
 		};
 		void poll();
+	}
+
+	private async sendFeedback(session: Session, metrics: Omit<WebRtcMetrics, 'targetFps' | 'scale' | 'adaptiveQuality'>): Promise<void> {
+		session.feedbackPending = true;
+		const signal = AbortSignal.any([session.controller.signal, AbortSignal.timeout(3000)]);
+		try {
+			const response = await abortable(fetch(session.feedbackUrl!, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+				body: JSON.stringify({ received_fps: metrics.fps, loss_ratio: metrics.lossRatio, jitter_ms: metrics.jitterMs, decode_ms: metrics.decodeMs }),
+			}), signal);
+			if (this.session !== session) return;
+			if (response.ok) {
+				const profile = await abortable(response.json(), signal);
+				if (Number.isFinite(profile.scale) && profile.scale >= 0.5 && profile.scale <= 1 && this.session === session) {
+					session.scale = profile.scale;
+					// Publish the scale with the next stats snapshot. Re-emitting the
+					// old sample here would overwrite newer FPS with stale feedback.
+				}
+			} else if (response.status === 404 || response.status === 405) session.feedbackUrl = undefined;
+		} catch (error) {
+			if (!session.controller.signal.aborted) console.debug('[WebRTC] Adaptive feedback unavailable:', error);
+		} finally { session.feedbackPending = false; }
 	}
 
 	/** Keep the old argument for callers; cleanup uses the original peer's URL. */

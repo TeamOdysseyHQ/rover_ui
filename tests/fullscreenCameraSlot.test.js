@@ -6,7 +6,7 @@ import { test } from 'node:test';
 const source = readFileSync(new URL('../src/lib/components/panels/FullscreenCameraSlot.svelte', import.meta.url), 'utf8')
     .split('<script lang="ts">')[1].split('</script>')[0]
     .replace(/^\s*import\s[\s\S]*?from\s*['"][^'"]+['"];?/gm, '');
-const script = stripTypeScriptTypes(source) + '\nglobalThis.h = { initStream, teardownStream, handleEdit, setPeer(peer) { rtcClient = peer; } };';
+const script = stripTypeScriptTypes(source) + '\nglobalThis.h = { initStream, teardownStream, handleEdit, setPeer(peer) { rtcClient = peer; }, websocket() { config.streamType = "websocket"; canvasRef = {}; }, error: () => streamError };';
 function setup() {
     let destroy, resolveCapabilities;
     const starts = [], stops = [], connects = [];
@@ -20,6 +20,7 @@ function setup() {
         stopCamera: async name => { stops.push(name); },
         selectCameraMode: () => ({ fps: 24 }),
         WebRtcStreamClient: class { onMetrics() {} onError() {} connect() { connects.push(1); } },
+        VideoStreamClient: class { onMetrics() {} onError() {} async connect() { throw Error('websocket unreachable'); } disconnect() {} },
         setTimeout: fn => { fn(); }
     };
     runInNewContext(script, context);
@@ -42,4 +43,11 @@ test('a slow fullscreen startup cannot attach a viewer after unmount', async () 
     destroy(); ready(); await pending;
     assert.deepEqual(starts, []);
     assert.deepEqual(connects, []);
+});
+
+test('fullscreen WebSocket startup errors are handled and shown in the slot', async () => {
+    const { h, ready } = setup();
+    h.websocket(); const pending = h.initStream();
+    await new Promise(setImmediate); ready(); await pending;
+    assert.equal(h.error(), 'websocket unreachable');
 });

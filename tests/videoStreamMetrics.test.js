@@ -96,6 +96,10 @@ test('custom WebSocket streams reconnect and ignore events from the previous soc
     const client = new VideoStreamClient({ reconnectDelay: 100 });
     await client.connectCustom('ws://mock.invalid/ros'); sockets[0].onopen();
     sockets[0].onclose({ code: 1006, reason: 'lost' });
+    sockets[0].onopen();
+    sockets[0].onmessage({ data: new Uint8Array([1]).buffer });
+    assert.equal(client.getState(), 'disconnected');
+    assert.equal(client.getMetrics().framesReceived, 0, 'a closed socket must not deliver late frames');
     t.mock.timers.tick(100);
     assert.equal(sockets.length, 2);
     assert.equal(sockets[1].url, 'ws://mock.invalid/ros');
@@ -103,6 +107,37 @@ test('custom WebSocket streams reconnect and ignore events from the previous soc
     assert.equal(client.getState(), 'connected');
     client.disconnect(); t.mock.timers.tick(1000);
     assert.equal(sockets.length, 2);
+});
+
+test('disconnected streams clear throughput and reconnect starts fresh latency measurements', t => {
+    const { client } = setup(t);
+    client.metrics.framesReceived = 30;
+    client.metrics.bytesReceived = 1000;
+    client.latencyHistory = [500];
+    t.mock.timers.tick(1000);
+    assert.equal(client.getMetrics().fps, 30);
+    client.handleClose({ code: 1000, reason: 'closed' });
+    assert.equal(client.getMetrics().fps, 0);
+    assert.equal(client.getMetrics().bitrateBps, 0);
+    client.handleOpen();
+    t.mock.timers.tick(1000);
+    assert.equal(client.getMetrics().avgLatencyMs, 0);
+    client.disconnect();
+});
+
+test('invalid stream rates are bounded and socket-send races are reported without throwing', t => {
+    const client = new VideoStreamClient({ quality: NaN, fps: Infinity });
+    assert.equal(client.config.quality, 85);
+    assert.equal(client.config.fps, 30);
+    client.ws = { readyState: 1, send: () => { throw new Error('socket closed'); }, close() {} };
+    client.state = 'connected';
+    const errors = [];
+    client.onError(error => errors.push(error));
+    assert.doesNotThrow(() => client.setQuality(75));
+    assert.equal(errors[0].message, 'socket closed');
+    client.setQuality(NaN);
+    assert.equal(client.config.quality, 75);
+    client.disconnect();
 });
 
 test('hardware WebSocket URL uses the API host and a late open cannot undo disconnect', async t => {

@@ -10,14 +10,17 @@ const source = readFileSync(new URL('../src/lib/components/panels/CameraPanel.sv
     .replace(/^\s*import\s[\s\S]*?from\s*['"][^'"]+['"];?/gm, '');
 const script = stripTypeScriptTypes(source) + `
 globalThis.harness = {
-    startWebRtcStream, stopWebRtcStream, stopAllCameras, webRtcLabel, setOpticalFlow, startWebSocketStream,
-    prepare() { activeCameras.add('science'); streamingModes.set('science', 'webrtc'); videoRefs.science = {}; },
+    startCamera, detectCameras, startWebRtcStream, stopWebRtcStream, stopAllCameras, releaseAllStreams, webRtcLabel, setOpticalFlow, startWebSocketStream,
+    handleMjpegParamChange, getStreamUrl,
+    prepare() { mounted = true; activeCameras.add('science'); streamingModes.set('science', 'webrtc'); videoRefs.science = {}; },
+    clear() { activeCameras.clear(); },
+    active: () => activeCameras.size,
     mode(value) { streamingModes.set('science', value); },
     feedback: () => feedbackMessage,
 };`;
 
 function setup() {
-    const peers = [], timers = [], mounts = [], flowStarts = [], flowStops = [];
+    const peers = [], timers = [], mounts = [], flowStarts = [], flowStops = [], backendStops = [];
     let resolveFlow, initializationCalls = 0;
     class OpticalFlowService {
         initialize() { initializationCalls++; return new Promise(resolve => { resolveFlow = resolve; }); }
@@ -37,15 +40,15 @@ function setup() {
         async disconnect() { this.change('disconnected'); }
     }
     const context = {
-        $state: value => value, $effect() {}, untrack: fn => fn(), pollEvery: () => () => {}, onMount: fn => mounts.push(fn), OpticalFlowService, WebRtcStreamClient: Peer, WEBRTC_TARGET_FPS: 24,
-        roverApi: { getCameraWebRtcOfferUrl: () => 'http://mock.invalid/offer', getCameraWebRtcDeleteUrl: () => null, stopAllCameras: async () => {} },
+        $state: value => value, $effect() {}, untrack: fn => fn(), tick: async () => {}, pollEvery: () => () => {}, onMount: fn => mounts.push(fn), OpticalFlowService, WebRtcStreamClient: Peer, WEBRTC_TARGET_FPS: 24,
+        roverApi: { getCameraWebRtcOfferUrl: () => 'http://mock.invalid/offer', getCameraWebRtcDeleteUrl: () => null, stopAllCameras: async () => { backendStops.push(true); }, getCameraStreamUrl: (name, fps, quality) => `/${name}?fps=${fps}&quality=${quality}` },
         console: { log() {}, error() {}, warn() {} },
-        setTimeout: (fn, delay) => { timers.push({ fn, delay }); return timers.length; }, clearTimeout() {},
+        setTimeout: (fn, delay) => { timers.push({ fn, delay, cancelled: false }); return timers.length; }, clearTimeout(id) { if (timers[id - 1]) timers[id - 1].cancelled = true; },
         setInterval() { return 1; }, clearInterval() {},
     };
     runInNewContext(script, context);
     context.harness.prepare();
-    return { h: context.harness, peers, timers, mounts, flowStarts, flowStops, ready: () => resolveFlow(), initializationCalls: () => initializationCalls };
+    return { h: context.harness, context, peers, timers, mounts, backendStops, flowStarts, flowStops, ready: () => resolveFlow(), initializationCalls: () => initializationCalls };
 }
 
 test('camera badge is live only with connected transport and received frames', async () => {
@@ -132,4 +135,65 @@ test('ordinary camera use does not load OpenCV or start diagnostics', async () =
     assert.equal(flowStarts.length, 0);
     h.mode('mjpeg');
     assert.doesNotThrow(() => h.startWebSocketStream('science'));
+});
+
+test('MJPEG sliders reconnect only once after the last debounce timer fires', () => {
+    const { h, timers } = setup();
+    h.handleMjpegParamChange('science', 'fps', 20);
+    h.handleMjpegParamChange('science', 'quality', 60);
+    assert.equal(h.getStreamUrl('science'), '/science?fps=30&quality=80');
+    const liveTimers = timers.filter(timer => !timer.cancelled);
+    assert.equal(liveTimers.length, 1);
+    liveTimers[0].fn();
+    assert.equal(h.getStreamUrl('science'), '/science?fps=20&quality=60');
+});
+
+test('panel unmount releases local viewers without stopping shared backend cameras', async () => {
+    const { h, peers, mounts, backendStops } = setup();
+    const cleanup = mounts[0]();
+    h.startWebRtcStream('science');
+    cleanup(); await Promise.resolve();
+    assert.equal(peers[0].state, 'disconnected');
+    assert.equal(h.active(), 0);
+    assert.equal(backendStops.length, 0);
+    h.startWebRtcStream('science');
+    assert.equal(peers.length, 1);
+});
+
+test('Stop All clears local state before a slow backend stop completes', async () => {
+    const { h, context, peers } = setup();
+    h.startWebRtcStream('science');
+    let resolveStop;
+    context.roverApi.stopAllCameras = () => new Promise(resolve => { resolveStop = resolve; });
+    const stopped = h.stopAllCameras();
+    assert.equal(h.active(), 0);
+    h.startWebRtcStream('science');
+    assert.equal(peers.length, 1);
+    peers[0].metrics({ fps: 24 });
+    assert.notEqual(h.webRtcLabel('science'), 'LIVE WebRTC');
+    resolveStop(); await stopped;
+});
+
+test('a pending camera start cannot recreate a viewer after unmount', async () => {
+    const { h, context, peers, mounts } = setup();
+    const cleanup = mounts[0](); h.clear();
+    let resolveStart;
+    context.roverApi.startCamera = () => new Promise(resolve => { resolveStart = resolve; });
+    context.selectCameraMode = () => ({ fps: 30 });
+    const starting = h.startCamera('science');
+    cleanup(); resolveStart({ camera: { fps: 30 } }); await starting;
+    assert.equal(h.active(), 0); assert.equal(peers.length, 0);
+});
+
+test('an established camera transport failure releases its peer and schedules recovery', async () => {
+    const { h, peers, timers } = setup();
+    h.startWebRtcStream('science'); peers[0].change('connected'); peers[0].resolve();
+    await Promise.resolve(); await Promise.resolve();
+    peers[0].metrics({ fps: 24 });
+    peers[0].error(new Error('transport failed'));
+    assert.equal(peers[0].state, 'disconnected');
+    assert.equal(h.webRtcLabel('science'), 'WebRTC · connection failed');
+    const retry = timers.find(timer => timer.fn.toString().includes('startWebRtcStream') && !timer.cancelled);
+    assert.ok(retry); retry.fn();
+    assert.equal(peers.length, 2);
 });

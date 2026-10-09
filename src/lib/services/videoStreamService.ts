@@ -75,7 +75,7 @@ export function decodeFrame(arrayBuffer: ArrayBuffer): DecodedFrame {
 	}
 
 	// Extract JPEG data
-	const jpegData = new Blob([arrayBuffer.slice(HEADER_SIZE)], { type: 'image/jpeg' });
+	const jpegData = new Blob([new Uint8Array(arrayBuffer, HEADER_SIZE)], { type: 'image/jpeg' });
 
 	// Calculate latency
 	const nowUs = BigInt(Math.floor(Date.now() * 1000));
@@ -109,7 +109,6 @@ export class VideoStreamClient {
 	};
 
 	private latencyHistory: number[] = [];
-	private frameTimestamps: number[] = [];
 	private metricsInterval: number | null = null;
 	private reconnectTimeout: number | null = null;
 	private qualityController = new JpegQualityController();
@@ -131,8 +130,8 @@ export class VideoStreamClient {
 	constructor(config: StreamConfig = {}) {
 		this.config = {
 			adaptiveQuality: config.adaptiveQuality ?? true,
-			quality: config.quality ?? 85,
-			fps: config.fps ?? 30,
+			quality: Number.isFinite(config.quality) ? Math.max(1, Math.min(100, Math.round(config.quality!))) : 85,
+			fps: Number.isFinite(config.fps) ? Math.max(1, Math.min(60, Math.round(config.fps!))) : 30,
 			autoReconnect: config.autoReconnect ?? true,
 			reconnectDelay: config.reconnectDelay ?? 2000
 		};
@@ -150,6 +149,7 @@ export class VideoStreamClient {
 
 		// Reset intentional disconnect flag
 		this.intentionalDisconnect = false;
+		this.clearReconnectTimer();
 
 		// Store canvas reference
 		if (canvas) {
@@ -164,7 +164,7 @@ export class VideoStreamClient {
 		this.customUrl = null;
 		const baseUrl = getApiBaseUrl();
 		const wsUrl = baseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-		const url = `${wsUrl}/api/nav/cameras/${cameraName}/ws?quality=${this.config.quality}&fps=${this.config.fps}`;
+		const url = `${wsUrl}/api/nav/cameras/${encodeURIComponent(cameraName)}/ws?quality=${this.config.quality}&fps=${this.config.fps}`;
 
 		try {
 			this.ws = new WebSocket(url);
@@ -195,6 +195,7 @@ export class VideoStreamClient {
 
 		// Reset intentional disconnect flag
 		this.intentionalDisconnect = false;
+		this.clearReconnectTimer();
 		this.cameraName = null;
 		this.customUrl = wsUrl;
 
@@ -232,10 +233,7 @@ export class VideoStreamClient {
 		this.intentionalDisconnect = true;
 		this.clearPendingFrames();
 
-		if (this.reconnectTimeout) {
-			clearTimeout(this.reconnectTimeout);
-			this.reconnectTimeout = null;
-		}
+		this.clearReconnectTimer();
 
 		if (this.metricsInterval) {
 			clearInterval(this.metricsInterval);
@@ -244,12 +242,15 @@ export class VideoStreamClient {
 
 		if (this.ws) {
 			// Close with normal closure code
-			this.ws.close(1000, 'User requested disconnect');
+			const socket = this.ws;
 			this.ws = null;
+			socket.close(1000, 'User requested disconnect');
 		}
 
 		this.setState('disconnected');
 		this.metrics.connected = false;
+		this.metrics.fps = 0;
+		this.metrics.bitrateBps = 0;
 		this.onMetricsCallback?.({ ...this.metrics });
 	}
 
@@ -257,20 +258,25 @@ export class VideoStreamClient {
 	 * Send control message to server
 	 */
 	sendControl(type: string, params?: Record<string, any>): void {
-		if (!this.ws || this.state !== 'connected') {
+		if (!this.ws || this.state !== 'connected' || (typeof this.ws.readyState === 'number' && this.ws.readyState !== 1)) {
 			console.warn('Not connected, cannot send control message');
 			return;
 		}
 
 		const message = params ? { type, ...params } : { type };
-		this.ws.send(JSON.stringify(message));
+		try { this.ws.send(JSON.stringify(message)); }
+		catch (error) {
+			this.metrics.errors++;
+			this.onErrorCallback?.(error instanceof Error ? error : new Error(String(error)));
+		}
 	}
 
 	/**
 	 * Set quality dynamically
 	 */
 	setQuality(quality: number): void {
-		this.config.quality = Math.max(1, Math.min(100, quality));
+		if (!Number.isFinite(quality)) return;
+		this.config.quality = Math.max(1, Math.min(100, Math.round(quality)));
 		this.sendControl('control', {
 			action: 'set_quality',
 			params: { quality: this.config.quality }
@@ -334,6 +340,12 @@ export class VideoStreamClient {
 	}
 
 	private handleOpen(): void {
+		this.latencyHistory = [];
+		this.metrics.fps = 0;
+		this.metrics.bitrateBps = 0;
+		this.metrics.avgLatencyMs = 0;
+		this.metrics.minLatencyMs = Infinity;
+		this.metrics.maxLatencyMs = 0;
 		this.lastMetricTime = Date.now();
 		this.lastMetricFrames = this.metrics.framesReceived;
 		this.lastMetricBytes = this.metrics.bytesReceived;
@@ -407,12 +419,6 @@ export class VideoStreamClient {
 				if (this.latencyHistory.length > 100) {
 					this.latencyHistory.shift();
 				}
-			}
-
-			// Track frame timestamps for FPS calculation
-			this.frameTimestamps.push(Date.now());
-			if (this.frameTimestamps.length > 60) {
-				this.frameTimestamps.shift();
 			}
 
 			// Render to canvas if available
@@ -520,10 +526,13 @@ export class VideoStreamClient {
 	}
 
 	private handleClose(event: CloseEvent): void {
+		this.ws = null;
 		this.clearPendingFrames();
 		console.log(`[VideoStream] Disconnected: ${event.code} ${event.reason}`);
 		this.setState('disconnected');
 		this.metrics.connected = false;
+		this.metrics.fps = 0;
+		this.metrics.bitrateBps = 0;
 
 		if (this.metricsInterval) {
 			clearInterval(this.metricsInterval);
@@ -534,6 +543,7 @@ export class VideoStreamClient {
 		if (!this.intentionalDisconnect && this.config.autoReconnect && event.code !== 1000 && (this.cameraName !== null || this.customUrl !== null)) {
 			console.log(`[VideoStream] Reconnecting in ${this.config.reconnectDelay}ms...`);
 			this.reconnectTimeout = window.setTimeout(() => {
+				this.reconnectTimeout = null;
 				if (!this.intentionalDisconnect) {
 					const reconnect = this.customUrl
 						? this.connectCustom(this.customUrl, this.canvas || undefined)
@@ -549,7 +559,13 @@ export class VideoStreamClient {
 		this.onMetricsCallback?.({ ...this.metrics });
 	}
 
+	private clearReconnectTimer(): void {
+		if (this.reconnectTimeout !== null) clearTimeout(this.reconnectTimeout);
+		this.reconnectTimeout = null;
+	}
+
 	private startMetricsUpdates(): void {
+		if (this.metricsInterval !== null) clearInterval(this.metricsInterval);
 		// Update metrics every second
 		this.metricsInterval = window.setInterval(() => {
 			this.updateMetrics();
