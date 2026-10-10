@@ -185,8 +185,8 @@ export async function listReports() {
 /**
  * Subscribe to motor RPM topic (call once on page load)
  */
-export async function subscribeMotorRpms() {
-    return apiRequest('/api/nav/ros/motor_rpms/subscribe', { method: 'POST' });
+export async function subscribeMotorRpms(signal) {
+    return apiRequest('/api/nav/ros/motor_rpms/subscribe', { method: 'POST', signal, timeoutMs: 5000 });
 }
 
 /**
@@ -228,8 +228,8 @@ export async function getScienceEndpoints() {
 /**
  * Get science sensor data (NPK, pH, CO2, temp, humidity, etc.)
  */
-export async function getScienceSensorData() {
-    return apiRequest('/api/sci/sensor_data', { method: 'POST' });
+export async function getScienceSensorData(signal) {
+    return apiRequest('/api/sci/sensor_data', { method: 'POST', signal, timeoutMs: 5000 });
 }
 
 /**
@@ -362,8 +362,8 @@ export async function subscribeToDrillData() {
 /**
  * Get latest drill telemetry (distance, IMU, halted status)
  */
-export async function getDrillData() {
-    return apiRequest('/api/sci/drill/data', { method: 'GET' });
+export async function getDrillData(signal) {
+    return apiRequest('/api/sci/drill/data', { method: 'GET', signal, timeoutMs: 5000 });
 }
 
 /**
@@ -376,8 +376,8 @@ export async function subscribeToScienceWarnings() {
 /**
  * Get latest science warning code
  */
-export async function getScienceWarnings() {
-    return apiRequest('/api/sci/warnings', { method: 'GET' });
+export async function getScienceWarnings(signal) {
+    return apiRequest('/api/sci/warnings', { method: 'GET', signal, timeoutMs: 5000 });
 }
 
 /**
@@ -481,18 +481,19 @@ export async function testApi(data = {}) {
 /**
  * Detect all connected cameras
  */
-export async function detectCameras(maxCameras = 10) {
+export async function detectCameras(maxCameras = 10, signal) {
     const params = `?max_cameras=${maxCameras}`;
-    return apiRequest(`/api/nav/cameras/detect${params}`, { method: 'GET' });
+    return apiRequest(`/api/nav/cameras/detect${params}`, { method: 'GET', signal, timeoutMs: 30000 });
 }
 
 /**
  * Get supported resolutions for a specific camera
  */
-export async function getSupportedResolutions(cameraName) {
-    const url = `${API_BASE_URL}/api/nav/cameras/${cameraName}/resolutions`;
+export async function getSupportedResolutions(cameraName, signal) {
+    const url = `${API_BASE_URL}/api/nav/cameras/${encodeURIComponent(cameraName)}/resolutions`;
     const response = await fetch(url, {
-        method: 'GET'
+        method: 'GET',
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000)
     });
     
     if (!response.ok) {
@@ -505,17 +506,18 @@ export async function getSupportedResolutions(cameraName) {
 /**
  * Start a specific camera
  */
-export async function startCamera(cameraName, width = 1280, height = 720, fps = 30, pixelFormat = undefined) {
+export async function startCamera(cameraName, width = 1280, height = 720, fps = 30, pixelFormat = undefined, signal) {
     const formData = new FormData();
     formData.append('width', width.toString());
     formData.append('height', height.toString());
     formData.append('fps', fps.toString());
     if (pixelFormat) formData.append('pixel_format', pixelFormat);
     
-    const url = `${API_BASE_URL}/api/nav/cameras/${cameraName}/start`;
+    const url = `${API_BASE_URL}/api/nav/cameras/${encodeURIComponent(cameraName)}/start`;
     const response = await fetch(url, {
         method: 'POST',
-        body: formData
+        body: formData,
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000)
     });
     
     if (!response.ok) {
@@ -528,10 +530,11 @@ export async function startCamera(cameraName, width = 1280, height = 720, fps = 
 /**
  * Stop a specific camera
  */
-export async function stopCamera(cameraName) {
-    const url = `${API_BASE_URL}/api/nav/cameras/${cameraName}/stop`;
+export async function stopCamera(cameraName, signal) {
+    const url = `${API_BASE_URL}/api/nav/cameras/${encodeURIComponent(cameraName)}/stop`;
     const response = await fetch(url, {
-        method: 'POST'
+        method: 'POST',
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000)
     });
     
     if (!response.ok) {
@@ -544,10 +547,11 @@ export async function stopCamera(cameraName) {
 /**
  * Stop all cameras
  */
-export async function stopAllCameras() {
+export async function stopAllCameras(signal) {
     const url = `${API_BASE_URL}/api/nav/cameras/stop_all`;
     const response = await fetch(url, {
-        method: 'POST'
+        method: 'POST',
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000)
     });
     
     if (!response.ok) {
@@ -560,15 +564,15 @@ export async function stopAllCameras() {
 /**
  * Get all cameras status
  */
-export async function getCamerasStatus() {
-    return apiRequest('/api/nav/cameras/status', { method: 'GET' });
+export async function getCamerasStatus(signal) {
+    return apiRequest('/api/nav/cameras/status', { method: 'GET', signal, timeoutMs: 5000 });
 }
 
 /**
  * Get specific camera status
  */
-export async function getCameraStatus(cameraName) {
-    return apiRequest(`/api/nav/cameras/${cameraName}/status`, { method: 'GET' });
+export async function getCameraStatus(cameraName, signal) {
+    return apiRequest(`/api/nav/cameras/${encodeURIComponent(cameraName)}/status`, { method: 'GET', signal, timeoutMs: 5000 });
 }
 
 /**
@@ -1059,8 +1063,8 @@ export async function disconnectArduino() {
 /**
  * Get Arduino connection status
  */
-export async function getArduinoStatus() {
-    return apiRequest('/api/nav/arduino/status', { method: 'GET' });
+export async function getArduinoStatus(signal) {
+    return apiRequest('/api/nav/arduino/status', { method: 'GET', signal, timeoutMs: 3000 });
 }
 
 /**

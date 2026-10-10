@@ -66,3 +66,18 @@ test('stat resets and reordered packets do not produce negative throughput/loss'
     assert.equal(sample.lossRatio, 0);
     assert.equal(sample.fps, 0);
 });
+
+test('non-finite browser stats never enter adaptation feedback', () => {
+    for (const field of ['timestamp', 'framesDecoded', 'bytesReceived', 'packetsReceived', 'packetsLost', 'totalDecodeTime', 'jitter']) {
+        const sampler = new WebRtcStatsSampler();
+        sampler.sample(stats());
+        assert.equal(sampler.sample(stats({ timestamp: 2000, [field]: NaN })), null, field);
+    }
+});
+
+test('FPS counters changing from received to decoded use a new baseline', () => {
+    const sampler = new WebRtcStatsSampler();
+    sampler.sample(stats({ framesDecoded: undefined, framesReceived: 100 }));
+    assert.equal(sampler.sample(stats({ timestamp: 2000, framesDecoded: 24, framesReceived: 148 })), null);
+    assert.equal(sampler.sample(stats({ timestamp: 4000, framesDecoded: 72, framesReceived: 196 })).fps, 24);
+});

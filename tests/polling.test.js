@@ -47,7 +47,7 @@ test('status reads avoid JSON preflight headers while JSON commands retain their
     await getMotorRpms();
     assert.equal(requests[0].headers['Content-Type'], undefined);
     await getSupportedResolutions('science');
-    assert.equal(requests[1].signal, undefined, 'hardware probing keeps its existing duration');
+    assert.ok(requests[1].signal instanceof AbortSignal, 'hardware probing has a longer bounded deadline');
     await publishCmdVel({ linear_x: 0, angular_z: 0 });
     assert.equal(requests[2].headers['Content-Type'], 'application/json');
     assert.equal(JSON.parse(requests[2].body).linear_x, 0);

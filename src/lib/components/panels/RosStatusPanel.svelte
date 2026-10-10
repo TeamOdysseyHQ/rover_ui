@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { pollEvery } from '$lib/services/polling.js';
+	import { apiStatus } from '$lib/stores/apiStore';
 	import { Wifi, WifiOff, RefreshCw, Activity } from '@lucide/svelte';
 	import { rosStatus, isRosConnected, checkRosStatus, connectToRos, disconnectFromRos } from '$lib/stores/rosStore';
 	import * as Card from '$lib/components/ui/card';
@@ -10,6 +11,10 @@
 	
 	// Auto-check status with cleanup
 	$effect(() => {
+		if ($apiStatus !== 'connected') {
+			rosStatus.set({ status: 'disconnected', url: null, subscribedTopics: [], publishedTopics: [], lastChecked: null });
+			return;
+		}
 		return pollEvery(signal => checkRosStatus(signal), 5000);
 	});
 	
@@ -58,7 +63,7 @@
 		<div class="flex justify-between items-center">
 			<span class="text-sm">Status:</span>
 			<Badge variant={$isRosConnected ? 'success' : 'destructive'}>
-				{$isRosConnected ? 'CONNECTED' : 'DISCONNECTED'}
+				{$rosStatus.status === 'unknown' ? 'UNVERIFIED' : $isRosConnected ? 'CONNECTED' : 'DISCONNECTED'}
 			</Badge>
 		</div>
 		

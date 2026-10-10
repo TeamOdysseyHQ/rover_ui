@@ -7,6 +7,7 @@
 	import CameraPanel from '$lib/components/panels/CameraPanel.svelte';
 	import FullscreenCameraView from '$lib/components/panels/FullscreenCameraView.svelte';
 	import ConnectionPanel from '$lib/components/panels/ConnectionPanel.svelte';
+	import StackHealthPanel from '$lib/components/panels/StackHealthPanel.svelte';
 	import CommandLog from '$lib/components/panels/CommandLog.svelte';
 	import RosStatusPanel from '$lib/components/panels/RosStatusPanel.svelte';
 	import TeensyTopicPanel from '$lib/components/panels/TeensyTopicPanel.svelte';
@@ -107,6 +108,7 @@
 		<main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 			<div class="space-y-6 xl:col-span-1">
 				<ConnectionPanel />
+				<StackHealthPanel />
 				
 				<!-- <TeensyTopicPanel /> -->
 				

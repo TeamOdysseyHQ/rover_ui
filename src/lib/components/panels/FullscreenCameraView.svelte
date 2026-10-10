@@ -1,14 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { pollEvery } from '$lib/services/polling.js';
+  import { motorRpmSample } from '$lib/stores/motorRpmStore.js';
   import { X, Wifi, LayoutGrid } from '@lucide/svelte';
   import { commandedVelocity } from '$lib/stores/rosStore';
   import { isFullscreen, fullscreenLayout, fullscreenSlots } from '$lib/stores/fullscreenStore';
-  import { subscribeMotorRpms, getMotorRpms, detectCameras } from '$lib/services/roverApi';
+  import { detectCameras } from '$lib/services/roverApi';
   import FullscreenCameraSlot from './FullscreenCameraSlot.svelte';
 
   // ─── State ────────────────────────────────────────────────────────────────
-  let rpms = $state({ front_left: 0, front_right: 0, mid_left: 0, mid_right: 0, rear_left: 0, rear_right: 0 });
+  let rpms = $state<Record<string, number>>({});
   let rpmInterval;
   let mounted = false;
   
@@ -43,17 +43,10 @@
   }
 
   // ─── Motor RPM polling ────────────────────────────────────────────────────
-  async function startRpmPolling() {
-    try { await subscribeMotorRpms(); } catch (_) {}
-    if (!mounted) return;
-    rpmInterval = pollEvery(async signal => {
-      try {
-        const result = await getMotorRpms(signal);
-        if (!signal.aborted && result?.success && result?.data) {
-          rpms = result.data;
-        }
-      } catch (_) {}
-    }, 200);
+  function startRpmPolling() {
+    rpmInterval = motorRpmSample.subscribe(sample => {
+      if (mounted) rpms = sample.data || {};
+    });
   }
 
   function stopRpmPolling() {
@@ -113,7 +106,7 @@
     return val.toFixed(decimals);
   }
   function fmtRpm(val) {
-    return Math.round(val).toString();
+    return Number.isFinite(val) ? Math.round(val).toString() : '—';
   }
   const wheelLabels = [
     { key: 'front_left',  label: 'FL' },
@@ -180,7 +173,7 @@
       {#each wheelLabels as { key, label }}
         <div class="rpm-row">
           <span class="rpm-label">{label}</span>
-          <span class="rpm-value">{fmtRpm(rpms[key] || 0)}</span>
+          <span class="rpm-value">{fmtRpm(rpms[key])}</span>
         </div>
       {/each}
     </div>

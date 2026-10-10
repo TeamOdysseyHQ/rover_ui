@@ -5,7 +5,7 @@ import * as api from '../src/lib/services/roverApi.js';
 
 let store;
 let instance = 0;
-const ok = () => ({ ok: true, json: async () => ({ cameras: [], status: {} }) });
+const ok = () => ({ ok: true, json: async () => ({ success: true, cameras: [], status: 'ok' }) });
 
 beforeEach(async () => {
     // Fresh connection state for each test, without changing production code.
@@ -108,4 +108,49 @@ test('disconnect invalidates an outstanding connection attempt', async (t) => {
     assert.equal(await connecting, false);
     assert.equal(get(store.apiStatus), 'disconnected');
     assert.equal(api.getApiBaseUrl(), api.DEFAULT_API_URL);
+});
+
+test('connected monitoring disarms after two failures and never overlaps reads', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    t.mock.method(globalThis, 'fetch', async () => ok());
+    await store.testConnection(api.DEFAULT_API_URL);
+    let resolveHealth, calls = 0;
+    t.mock.method(globalThis, 'fetch', () => { calls++; return new Promise(resolve => { resolveHealth = resolve; }); });
+    const stop = store.monitorConnection();
+    t.after(stop);
+    await new Promise(setImmediate);
+    t.mock.timers.tick(20000);
+    assert.equal(calls, 1);
+    resolveHealth({ ok: false, status: 503 });
+    await new Promise(setImmediate);
+    assert.equal(get(store.apiStatus), 'connected');
+    t.mock.timers.tick(2000);
+    resolveHealth({ ok: false, status: 503 });
+    await new Promise(setImmediate);
+    assert.equal(get(store.apiStatus), 'error');
+    assert.match(get(store.apiHealth).error, /503/);
+});
+
+test('superseded health monitor cannot disarm a newer connection', async t => {
+    t.mock.method(globalThis, 'fetch', async () => ok());
+    await store.testConnection(api.DEFAULT_API_URL);
+    store.apiHealth.set({ lastChecked: null, latencyMs: null, error: null });
+    let resolveHealth;
+    t.mock.method(globalThis, 'fetch', () => new Promise(resolve => { resolveHealth = resolve; }));
+    const stop = store.monitorConnection();
+    t.after(stop);
+    t.mock.method(globalThis, 'fetch', async () => ok());
+    await store.testConnection('http://new-rover.invalid');
+    resolveHealth({ ok: false, status: 503 });
+    await new Promise(setImmediate);
+    assert.equal(get(store.apiStatus), 'connected');
+});
+
+test('HTML and unrelated JSON health responses never enable rover controls', async t => {
+    t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => { throw new SyntaxError('HTML response'); } }));
+    assert.equal(await store.testConnection(api.DEFAULT_API_URL), false);
+    assert.equal(get(store.apiStatus), 'error');
+    t.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ page: 'captive portal' }) }));
+    assert.equal(await store.testConnection(api.DEFAULT_API_URL), false);
+    assert.equal(get(store.apiStatus), 'error');
 });

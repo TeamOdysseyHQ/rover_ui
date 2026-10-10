@@ -1,16 +1,15 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import { pollEvery } from '$lib/services/polling.js';
+	import { motorRpmSample } from '$lib/stores/motorRpmStore.js';
 	import { Activity, RefreshCw, Gauge, Play, Square } from '@lucide/svelte';
-	import * as roverApi from '$lib/services/roverApi';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 
 	// ── constants ────────────────────────────────────────────────────────────
 	const POLL_INTERVAL_MS = 200; // 5 Hz
-	const MAX_POINTS = 60; // 12 seconds of history at 5 Hz
+	const MAX_POINTS = 60; // Up to 12 seconds of successful API readings at 5 Hz
 
 	const WHEEL_KEYS = ['front_left', 'front_right', 'mid_left', 'mid_right', 'rear_left', 'rear_right'] as const;
 	const WHEEL_LABELS = ['FL', 'FR', 'ML', 'MR', 'RL', 'RR'];
@@ -25,7 +24,6 @@
 
 	// ── state ────────────────────────────────────────────────────────────────
 	let isRunning = $state(false);
-	let isSubscribed = $state(false);
 	let lastError = $state<string | null>(null);
 	let lastUpdateTime = $state<Date | null>(null);
 
@@ -37,12 +35,11 @@
 	});
 
 	// rolling history arrays (one per wheel)
-	let history = $state<number[][]>(WHEEL_KEYS.map(() => []));
+	let history = $state<(number | null)[][]>(WHEEL_KEYS.map(() => []));
 	let timeLabels = $state<string[]>([]);
 
 	let pollTimer: (() => void) | null = null;
 	let mounted = false;
-	let startAttempt = 0;
 
 	// ── chart data (derived) ─────────────────────────────────────────────────
 	let chartData = $derived({
@@ -103,52 +100,32 @@
 		const newLabels = [...timeLabels, label].slice(-MAX_POINTS);
 		const newHistory = WHEEL_KEYS.map((key, i) => [
 			...history[i],
-			data[key] ?? 0
+			Number.isFinite(data[key]) ? data[key] : null
 		].slice(-MAX_POINTS));
 
 		timeLabels = newLabels;
 		history = newHistory;
 
 		WHEEL_KEYS.forEach((key) => {
-			current[key] = data[key] ?? null;
+			current[key] = Number.isFinite(data[key]) ? data[key] : null;
 		});
 		lastUpdateTime = new Date();
 	}
 
-	async function poll(signal: AbortSignal) {
-		try {
-			const res = await roverApi.getMotorRpms(signal);
-			if (!signal.aborted && res.success) {
-				pushData(res.data);
-				lastError = null;
-			}
-		} catch (e: any) {
-			if (!signal.aborted) lastError = e.message ?? 'Poll failed';
-		}
-	}
-
-	async function start() {
+	function start() {
 		if (!mounted || isRunning) return;
-		const attempt = ++startAttempt;
 		isRunning = true;
-		try {
-			await roverApi.subscribeMotorRpms();
-			isSubscribed = true;
-		} catch {
-			// subscription endpoint may not require awaiting
-		}
-		if (!mounted || attempt !== startAttempt) return;
-		pollTimer = pollEvery(poll, POLL_INTERVAL_MS);
-		isRunning = true;
-		lastError = null;
+		pollTimer = motorRpmSample.subscribe(sample => {
+			if (!mounted || !isRunning) return;
+			lastError = sample.error;
+			if (sample.data) pushData(sample.data);
+			else WHEEL_KEYS.forEach(key => { current[key] = null; });
+		});
 	}
 
 	function stop() {
-		startAttempt++;
-		if (pollTimer !== null) {
-			pollTimer();
-			pollTimer = null;
-		}
+		pollTimer?.();
+		pollTimer = null;
 		isRunning = false;
 	}
 
@@ -164,6 +141,7 @@
 	// ── lifecycle ─────────────────────────────────────────────────────────────
 	onMount(() => {
 		mounted = true;
+		start();
 		void (async () => {
 			const { Line } = await import('svelte-chartjs');
 			const {
@@ -179,7 +157,6 @@
 			Chart.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler);
 			if (!mounted) return;
 			LineChart = Line;
-			await start();
 		})().catch(error => { if (mounted) lastError = error.message; });
 		return () => { mounted = false; stop(); };
 	});
@@ -193,11 +170,11 @@
 					<Gauge class="w-5 h-5 text-sky-400" />
 					Motor RPM Monitor
 				</Card.Title>
-				<p class="text-xs text-muted-foreground mt-0.5">6-wheel live feed · 5 Hz</p>
+				<p class="text-xs text-muted-foreground mt-0.5">6-wheel API readings · 5 Hz</p>
 			</div>
 			<div class="flex items-center gap-2">
 				<Badge variant={isRunning ? 'default' : 'secondary'} class="text-xs">
-					{isRunning ? 'Live' : 'Stopped'}
+					{isRunning ? 'Polling' : 'Stopped'}
 				</Badge>
 				<Button
 					variant={isRunning ? 'destructive' : 'default'}
@@ -243,7 +220,7 @@
 			</div>
 		{:else if LineChart}
 			<div class="h-52 w-full">
-				<svelte:component this={LineChart} data={chartData} options={chartOptions} />
+				<LineChart data={chartData} options={chartOptions} />
 			</div>
 		{/if}
 
