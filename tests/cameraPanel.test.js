@@ -3,197 +3,30 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
-
-// Actual component handlers with fake peers; no browser or camera control.
-const source = readFileSync(new URL('../src/lib/components/panels/CameraPanel.svelte', import.meta.url), 'utf8')
-    .split('<script lang="ts">')[1].split('</script>')[0]
-    .replace(/^\s*import\s[\s\S]*?from\s*['"][^'"]+['"];?/gm, '');
-const script = stripTypeScriptTypes(source) + `
-globalThis.harness = {
-    startCamera, detectCameras, startWebRtcStream, stopWebRtcStream, stopAllCameras, releaseAllStreams, webRtcLabel, setOpticalFlow, startWebSocketStream,
-    handleMjpegParamChange, getStreamUrl,
-    prepare() { mounted = true; activeCameras.add('science'); streamingModes.set('science', 'webrtc'); videoRefs.science = {}; },
-    clear() { activeCameras.clear(); },
-    active: () => activeCameras.size,
-    mode(value) { streamingModes.set('science', value); },
-    feedback: () => feedbackMessage,
-};`;
-
-function setup() {
-    const peers = [], timers = [], mounts = [], flowStarts = [], flowStops = [], backendStops = [];
-    let resolveFlow, initializationCalls = 0;
-    class OpticalFlowService {
-        initialize() { initializationCalls++; return new Promise(resolve => { resolveFlow = resolve; }); }
-        start(name, video) { flowStarts.push({ name, video }); }
-        stop(name) { flowStops.push(name); }
-        stopAll() { flowStops.push('*'); }
-    }
-    class Peer {
-        state = 'disconnected';
-        constructor() { peers.push(this); }
-        getState() { return this.state; }
-        onStateChange(fn) { this.stateChanged = fn; }
-        onMetrics(fn) { this.metrics = fn; }
-        onError(fn) { this.error = fn; }
-        change(state) { this.state = state; this.stateChanged(state); }
-        connect() { this.change('connecting'); return new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; }); }
-        async disconnect() { this.change('disconnected'); }
-    }
-    const context = {
-        $state: value => value, $effect() {}, untrack: fn => fn(), tick: async () => {}, pollEvery: () => () => {}, onMount: fn => mounts.push(fn), OpticalFlowService, WebRtcStreamClient: Peer, WEBRTC_TARGET_FPS: 24,
-        roverApi: { getCameraWebRtcOfferUrl: () => 'http://mock.invalid/offer', getCameraWebRtcDeleteUrl: () => null, stopAllCameras: async () => { backendStops.push(true); }, getCameraStreamUrl: (name, fps, quality) => `/${name}?fps=${fps}&quality=${quality}` },
-        console: { log() {}, error() {}, warn() {} },
-        setTimeout: (fn, delay) => { timers.push({ fn, delay, cancelled: false }); return timers.length; }, clearTimeout(id) { if (timers[id - 1]) timers[id - 1].cancelled = true; },
-        setInterval() { return 1; }, clearInterval() {},
-    };
-    runInNewContext(script, context);
-    context.harness.prepare();
-    return { h: context.harness, context, peers, timers, mounts, backendStops, flowStarts, flowStops, ready: () => resolveFlow(), initializationCalls: () => initializationCalls };
+const source=readFileSync(new URL('../src/lib/components/panels/H264Viewer.svelte',import.meta.url),'utf8').split('<script lang="ts">')[1].split('</script>')[0].replace(/^\s*import\s[\s\S]*?from\s*['"][^'"]+['"];?/gm,'');
+const script=stripTypeScriptTypes(source)+'\nglobalThis.h={video(v){video=v;},state:()=>state,error:()=>error,metrics:()=>metrics};';
+const settle=()=>new Promise(setImmediate);
+function setup(){
+ const effects=[],peers=[],timers=[],flow=[];
+ class Peer{
+  constructor(){peers.push(this);}
+  onStateChange(fn){this.state=fn;}onMetrics(fn){this.metrics=fn;}onError(fn){this.error=fn;}
+  connect(){return new Promise((resolve,reject)=>{this.resolve=resolve;this.reject=reject;});}
+  async disconnect(){this.closed=true;}
+ }
+ const context={$props:()=>({offerUrl:'http://rover/offer',targetFps:60}),$state:v=>v,$effect:fn=>effects.push(fn),tick:async()=>{},WebRtcStreamClient:Peer,OpticalFlowService:class{stopAll(){flow.push('stop');}initialize(){flow.push('load');return Promise.resolve();}start(){flow.push('start');}},setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout(){}};
+ runInNewContext(script,context);context.h.video({});const cleanup=effects[0]();effects[1]();
+ return{h:context.h,peers,timers,flow,cleanup};
 }
-
-test('camera badge is live only with connected transport and received frames', async () => {
-    const { h, peers } = setup();
-    h.startWebRtcStream('science');
-    assert.equal(h.webRtcLabel('science'), 'WebRTC · connecting');
-    peers[0].change('connected'); peers[0].resolve(); await Promise.resolve();
-    assert.equal(h.webRtcLabel('science'), 'WebRTC · waiting for frames');
-    peers[0].metrics({ fps: 24 });
-    assert.equal(h.webRtcLabel('science'), 'LIVE WebRTC');
-    peers[0].metrics({ fps: 0 });
-    assert.equal(h.webRtcLabel('science'), 'WebRTC · waiting for frames');
-    peers[0].change('error');
-    assert.equal(h.webRtcLabel('science'), 'WebRTC · connection failed');
+test('shared H264 viewer releases only its peer and ignores stale callbacks',async()=>{
+ const{h,peers,cleanup}=setup();await settle();const p=peers[0];p.state('connected');p.resolve();await settle();p.metrics({fps:60});assert.equal(h.metrics().fps,60);cleanup();assert.equal(p.closed,true);p.metrics({fps:1});assert.equal(h.metrics().fps,60);
 });
-
-test('duplicate starts do not create extra viewers and late starts respect mode', () => {
-    const { h, peers } = setup();
-    h.startWebRtcStream('science'); h.startWebRtcStream('science');
-    assert.equal(peers.length, 1);
-    peers[0].change('connected'); h.startWebRtcStream('science');
-    assert.equal(peers.length, 1);
-    h.mode('mjpeg'); h.startWebRtcStream('science');
-    assert.equal(peers.length, 1);
+test('capacity errors remain errors without transport fallback or retry',async()=>{
+ const{h,peers,timers,cleanup}=setup();await settle();const reason=Object.assign(new Error('capacity reached'),{status:429});peers[0].error(reason);peers[0].reject(reason);await settle();assert.equal(h.error(),'capacity reached');assert.equal(timers.length,0);assert.equal(peers[0].closed,true);cleanup();
 });
-
-test('retry banner retains the actual negotiation error', async () => {
-    const { h, peers, timers } = setup();
-    h.startWebRtcStream('science'); peers[0].change('error');
-    peers[0].reject(Object.assign(new Error('No local ICE address'), { status: 500 }));
-    await Promise.resolve(); await Promise.resolve();
-    assert.match(h.feedback(), /No local ICE address.*retrying 'science'/);
-    assert.ok(timers.some(timer => timer.delay === 5000));
-    await h.stopWebRtcStream('science');
-    peers[0].metrics({ fps: 24 }); peers[0].change('connected');
-    assert.notEqual(h.webRtcLabel('science'), 'LIVE WebRTC');
+test('callback and rejected negotiation schedule only one recovery',async()=>{
+ const{peers,timers,cleanup}=setup();await settle();const reason=new Error('ICE failed');peers[0].error(reason);peers[0].reject(reason);await settle();assert.equal(timers.length,1);assert.equal(timers[0].delay,2000);cleanup();timers[0].fn();await settle();assert.equal(peers.length,1);
 });
-
-
-test('a camera connected before OpenCV loads starts diagnostics when ready', async () => {
-    const { h, peers, mounts, flowStarts, flowStops, ready } = setup();
-    const cleanup = mounts[0]();
-    const initializing = h.setOpticalFlow('science', true);
-    h.startWebRtcStream('science');
-    peers[0].change('connected'); peers[0].resolve(); await Promise.resolve();
-    assert.equal(flowStarts.length, 0);
-    ready(); await initializing;
-    assert.equal(flowStarts.length, 1);
-    assert.equal(flowStarts[0].name, 'science');
-    peers[0].change('error');
-    assert.ok(flowStops.includes('science'));
-    cleanup();
-});
-
-test('late initialization cannot start processing after unmount or mode change', async () => {
-    for (const action of ['unmount', 'mode', 'disabled']) {
-        const { h, peers, mounts, flowStarts, ready } = setup();
-        const cleanup = mounts[0]();
-        const initializing = h.setOpticalFlow('science', true);
-        h.startWebRtcStream('science');
-        peers[0].change('connected'); peers[0].resolve(); await Promise.resolve();
-        if (action === 'unmount') cleanup();
-        else if (action === 'mode') h.mode('mjpeg');
-        else await h.setOpticalFlow('science', false);
-        ready(); await initializing;
-        assert.equal(flowStarts.length, 0);
-    }
-});
-
-test('Stop All releases optical flow even while backend shutdown is pending', async () => {
-    const { h, flowStops } = setup();
-    const stop = h.stopAllCameras();
-    assert.deepEqual(flowStops, ['*']);
-    await stop;
-});
-
-
-test('ordinary camera use does not load OpenCV or start diagnostics', async () => {
-    const { h, peers, mounts, flowStarts, initializationCalls } = setup();
-    mounts[0]();
-    h.startWebRtcStream('science');
-    peers[0].change('connected'); peers[0].resolve(); await Promise.resolve();
-    assert.equal(initializationCalls(), 0);
-    assert.equal(flowStarts.length, 0);
-    h.mode('mjpeg');
-    assert.doesNotThrow(() => h.startWebSocketStream('science'));
-});
-
-test('MJPEG sliders reconnect only once after the last debounce timer fires', () => {
-    const { h, timers } = setup();
-    h.handleMjpegParamChange('science', 'fps', 20);
-    h.handleMjpegParamChange('science', 'quality', 60);
-    assert.equal(h.getStreamUrl('science'), '/science?fps=30&quality=80');
-    const liveTimers = timers.filter(timer => !timer.cancelled);
-    assert.equal(liveTimers.length, 1);
-    liveTimers[0].fn();
-    assert.equal(h.getStreamUrl('science'), '/science?fps=20&quality=60');
-});
-
-test('panel unmount releases local viewers without stopping shared backend cameras', async () => {
-    const { h, peers, mounts, backendStops } = setup();
-    const cleanup = mounts[0]();
-    h.startWebRtcStream('science');
-    cleanup(); await Promise.resolve();
-    assert.equal(peers[0].state, 'disconnected');
-    assert.equal(h.active(), 0);
-    assert.equal(backendStops.length, 0);
-    h.startWebRtcStream('science');
-    assert.equal(peers.length, 1);
-});
-
-test('Stop All clears local state before a slow backend stop completes', async () => {
-    const { h, context, peers } = setup();
-    h.startWebRtcStream('science');
-    let resolveStop;
-    context.roverApi.stopAllCameras = () => new Promise(resolve => { resolveStop = resolve; });
-    const stopped = h.stopAllCameras();
-    assert.equal(h.active(), 0);
-    h.startWebRtcStream('science');
-    assert.equal(peers.length, 1);
-    peers[0].metrics({ fps: 24 });
-    assert.notEqual(h.webRtcLabel('science'), 'LIVE WebRTC');
-    resolveStop(); await stopped;
-});
-
-test('a pending camera start cannot recreate a viewer after unmount', async () => {
-    const { h, context, peers, mounts } = setup();
-    const cleanup = mounts[0](); h.clear();
-    let resolveStart;
-    context.roverApi.startCamera = () => new Promise(resolve => { resolveStart = resolve; });
-    context.selectCameraMode = () => ({ fps: 30 });
-    const starting = h.startCamera('science');
-    cleanup(); resolveStart({ camera: { fps: 30 } }); await starting;
-    assert.equal(h.active(), 0); assert.equal(peers.length, 0);
-});
-
-test('an established camera transport failure releases its peer and schedules recovery', async () => {
-    const { h, peers, timers } = setup();
-    h.startWebRtcStream('science'); peers[0].change('connected'); peers[0].resolve();
-    await Promise.resolve(); await Promise.resolve();
-    peers[0].metrics({ fps: 24 });
-    peers[0].error(new Error('transport failed'));
-    assert.equal(peers[0].state, 'disconnected');
-    assert.equal(h.webRtcLabel('science'), 'WebRTC · connection failed');
-    const retry = timers.find(timer => timer.fn.toString().includes('startWebRtcStream') && !timer.cancelled);
-    assert.ok(retry); retry.fn();
-    assert.equal(peers.length, 2);
+test('ordinary viewing leaves optical-flow diagnostics unloaded',async()=>{
+ const{flow,cleanup}=setup();await settle();assert.ok(!flow.includes('load'));cleanup();
 });

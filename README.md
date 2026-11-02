@@ -1,4 +1,46 @@
-# Rover UI — Rolling-Shutter / Jello Reduction Handoff
+# Rover UI
+
+The dashboard receives H.264 over WebRTC UDP from RoverAPI_Endpoint. GStreamer
+captures and encodes once per camera with x264 ultrafast. Kreo Owl defaults to
+1280×720 at its advertised 60 FPS. MJPEG and JPEG-over-WebSocket playback modes
+and automatic fallback to those transports have been removed.
+
+## Run the dashboard
+
+```sh
+npm ci
+npm run dev
+```
+
+Connect to the onboard API in the connection panel, then start Kreo Owl under
+Camera control. The default API address is `http://192.168.1.3:6767`. Set
+`VITE_ROVER_API_URL` before building or starting Vite to use another default.
+Update the API and UI together. The API's README lists the native GStreamer
+packages required on the rover.
+
+Fullscreen slots use the same player and share the camera's encoder. Closing a
+slot releases only its viewer. Stop the camera before changing a mode shared by
+other viewers. Microscope and ROS camera panels use the same H.264 player.
+
+The player shows received FPS and bitrate. When timestamp callbacks are available,
+it also estimates source-buffer-to-browser latency. Small clock probes and frame
+metadata travel over an unordered WebRTC data channel. Exposure, camera-internal
+buffering, and display scanout are outside this measurement. Clock estimates and
+latency metrics do not control or delay video frames.
+
+Optical flow is optional and remains off until enabled. Its track count and
+motion measurements appear in the video overlay. It does not correct rolling
+shutter or prove that a video is free of geometric distortion.
+
+Run `npm test` and `npm run build` for local checks. Final hardware verification,
+fullscreen sharing, and latency measurements on the rover remain pending after
+the final changes. The onboard production API has not been replaced.
+
+## Earlier camera diagnostics
+
+The sections below record the earlier optical-flow work. References to old
+transport choices and capture implementations describe those earlier revisions.
+
 
 ## Performance review follow-up (4 October 2026)
 
@@ -7,12 +49,10 @@ Optical-flow diagnostics are optional per camera and disabled by default. Enabli
 and pauses in hidden tabs. The service has been simplified while retaining the same
 LK, forward/backward, MAD and spatial measurement stages.
 
-WebSocket rendering keeps one active JPEG decode and the newest pending frame,
-so a busy renderer cannot build an old-frame queue. Camera status, ROS status and
-RPM polling wait for each request to finish before scheduling another, with read
-request deadlines and cancellation on teardown. FPS metrics are published before
-waiting for adaptive-quality feedback. Closing/editing fullscreen viewers releases
-only their connection; camera capture is controlled by the dashboard camera buttons.
+Camera status, ROS status, and RPM polling were serialized with request deadlines
+and cancellation on teardown. Viewers released their connections without stopping
+shared capture. The JPEG rendering and adaptive-quality paths from this revision
+have since been removed.
 
 ## PR #2 review updates (4 October 2026)
 
@@ -154,7 +194,7 @@ src/lib/components/panels/CameraPanel.svelte
 
 ## WebRTC integration
 
-`CameraPanel.svelte` owns the video element and passes it to the WebRTC client.
+`H264Viewer.svelte` now owns the video element, WebRTC client, and optional diagnostics.
 
 The important architecture is:
 
@@ -174,7 +214,9 @@ The optical-flow service creates its own hidden/reduced-resolution canvas and co
 
 ### Important constraint
 
-**Do not modify RoverAPI, the rover capture pipeline, or the existing WebRTC backend for this stage.**
+The original optical-flow stage kept the capture backend unchanged. The H.264
+migration above now replaces that capture implementation while retaining optional
+client-side optical flow.
 
 The goal is to process the already-decoded WebRTC frames in the dashboard frontend.
 

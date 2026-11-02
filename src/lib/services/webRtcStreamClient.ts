@@ -1,6 +1,6 @@
-import { WebRtcStatsSampler, type WebRtcMetrics } from './webRtcMetrics.ts';
+import { FrameLatencySampler, WebRtcStatsSampler, type WebRtcMetrics } from './webRtcMetrics.ts';
 export type { WebRtcMetrics } from './webRtcMetrics.ts';
-export const WEBRTC_TARGET_FPS = 24;
+export const WEBRTC_TARGET_FPS = 60;
 
 type WebRtcState = 'disconnected' | 'connecting' | 'connected' | 'error';
 type StreamError = Error & { status?: number };
@@ -13,8 +13,10 @@ type Session = {
 	established: boolean;
 	metricsTimer?: ReturnType<typeof setTimeout>;
 	disconnectTimer?: ReturnType<typeof setTimeout>;
-	feedbackUrl?: string;
-	feedbackPending?: boolean;
+	timingChannel?: RTCDataChannel;
+	timingTimer?: ReturnType<typeof setTimeout>;
+	frameCallback?: number;
+	latency: FrameLatencySampler;
 	targetFps: number;
 	scale: number;
 };
@@ -23,7 +25,7 @@ function errorMessage(status: number): string {
 	switch (status) {
 		case 400: return 'Camera not started — click Start first';
 		case 404: return 'Camera not found';
-		case 429: return 'Too many viewers — try MJPEG mode';
+		case 429: return 'Viewer capacity reached. Close another camera view.';
 		case 503: return 'ROS not connected';
 		default: return `WebRTC negotiation failed (HTTP ${status})`;
 	}
@@ -79,6 +81,9 @@ export class WebRtcStreamClient {
 
 	private async release(session: Session): Promise<void> {
 		if (session.metricsTimer) clearTimeout(session.metricsTimer);
+		if (session.timingTimer) clearTimeout(session.timingTimer);
+        if (session.timingChannel) { session.timingChannel.onmessage = null; session.timingChannel.onopen = null; session.timingChannel.close(); }
+		if (session.frameCallback !== undefined) session.video.cancelVideoFrameCallback(session.frameCallback);
 		if (session.disconnectTimer) clearTimeout(session.disconnectTimer);
 		session.pc.ontrack = null;
 		session.pc.onconnectionstatechange = null;
@@ -105,7 +110,7 @@ export class WebRtcStreamClient {
 		let session: Session | null = null;
 		try {
 			const pc = new RTCPeerConnection({ iceServers: [] });
-			session = { pc, video, controller, stream: null, deleteUrl: null, established: false, targetFps: fps, scale: 1 };
+			session = { pc, video, controller, stream: null, deleteUrl: null, established: false, targetFps: fps, scale: 1, latency: new FrameLatencySampler() };
 			this.session = session;
 			const current = session;
 			pc.ontrack = (event) => {
@@ -145,7 +150,16 @@ export class WebRtcStreamClient {
 				}
 			};
 
-			pc.addTransceiver('video', { direction: 'recvonly' });
+            if (typeof pc.createDataChannel === 'function') current.timingChannel = pc.createDataChannel('timing', { ordered: false, maxRetransmits: 0 });
+			const transceiver = pc.addTransceiver('video', { direction: 'recvonly' });
+            if (typeof RTCRtpReceiver !== 'undefined' && transceiver?.setCodecPreferences) {
+                const codecs = RTCRtpReceiver.getCapabilities('video')?.codecs.filter(codec => codec.mimeType.toLowerCase() === 'video/h264');
+                if (!codecs?.length) throw new Error('This browser does not support H.264 video');
+                transceiver.setCodecPreferences(codecs);
+                // Use the browser's supported zero-buffer target rather than its default playout delay.
+                if ('jitterBufferTarget' in transceiver.receiver) transceiver.receiver.jitterBufferTarget = 0;
+                if ('playoutDelayHint' in transceiver.receiver) Reflect.set(transceiver.receiver, 'playoutDelayHint', 0);
+            }
 			const offer = await abortable(pc.createOffer(), signal);
 			signal.throwIfAborted();
 			await abortable(pc.setLocalDescription(offer), signal);
@@ -164,10 +178,7 @@ export class WebRtcStreamClient {
 				url.pathname = url.pathname.replace(/\/offer\/?$/, '') + '/connections/' + encodeURIComponent(answer.peer_id);
 				if (typeof answer.topic === 'string') url.searchParams.set('topic_name', answer.topic);
 				current.deleteUrl = url.toString();
-				if (answer.adaptive_quality === true) {
-					url.pathname += '/feedback';
-					current.feedbackUrl = url.toString();
-				}
+
 			}
 			if (Number.isFinite(answer.target_fps) && answer.target_fps > 0) current.targetFps = answer.target_fps;
 			signal.throwIfAborted();
@@ -177,6 +188,7 @@ export class WebRtcStreamClient {
 			current.established = true;
 			this.setState('connected');
 			this.startMetrics(current);
+            this.startFrameTiming(current);
 		} catch (reason) {
 			const error = reason instanceof Error ? reason : new Error(String(reason));
 			if (session) void this.release(session);
@@ -211,11 +223,8 @@ export class WebRtcStreamClient {
 				const metrics = sampler.sample(stats);
 				if (metrics) {
 					// A slow feedback endpoint must not delay delivered-FPS updates.
-					this.onMetricsCallback?.({ ...metrics, targetFps: session.targetFps, scale: session.scale, adaptiveQuality: !!session.feedbackUrl });
-					// Hidden tabs can throttle decoding; do not downgrade the stream for that.
-					if (session.feedbackUrl && !session.feedbackPending && session.pc.connectionState === 'connected' && (typeof document === 'undefined' || !document.hidden)) {
-						void this.sendFeedback(session, metrics);
-					}
+					this.onMetricsCallback?.({ ...metrics, targetFps: session.targetFps, scale: session.scale, adaptiveQuality: false, ...session.latency.metrics() });
+
 				}
 			} catch (error) {
 				if (!session.controller.signal.aborted) console.debug('[WebRTC] Metrics sample unavailable:', error);
@@ -226,27 +235,37 @@ export class WebRtcStreamClient {
 		void poll();
 	}
 
-	private async sendFeedback(session: Session, metrics: Omit<WebRtcMetrics, 'targetFps' | 'scale' | 'adaptiveQuality'>): Promise<void> {
-		session.feedbackPending = true;
-		const signal = AbortSignal.any([session.controller.signal, AbortSignal.timeout(3000)]);
-		try {
-			const response = await abortable(fetch(session.feedbackUrl!, {
-				method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
-				body: JSON.stringify({ received_fps: metrics.fps, loss_ratio: metrics.lossRatio, jitter_ms: metrics.jitterMs, decode_ms: metrics.decodeMs }),
-			}), signal);
-			if (this.session !== session) return;
-			if (response.ok) {
-				const profile = await abortable(response.json(), signal);
-				if (Number.isFinite(profile.scale) && profile.scale >= 0.5 && profile.scale <= 1 && this.session === session) {
-					session.scale = profile.scale;
-					// Publish the scale with the next stats snapshot. Re-emitting the
-					// old sample here would overwrite newer FPS with stale feedback.
-				}
-			} else if (response.status === 404 || response.status === 405) session.feedbackUrl = undefined;
-		} catch (error) {
-			if (!session.controller.signal.aborted) console.debug('[WebRTC] Adaptive feedback unavailable:', error);
-		} finally { session.feedbackPending = false; }
-	}
+    private startFrameTiming(session: Session): void {
+        if (!session.timingChannel || typeof session.video.requestVideoFrameCallback !== 'function') return;
+        const frame = (now: number, metadata: VideoFrameCallbackMetadata) => {
+            if (this.session !== session || session.controller.signal.aborted) return;
+            if ('rtpTimestamp' in metadata && typeof metadata.rtpTimestamp === 'number') {
+                session.latency.record(metadata.rtpTimestamp, performance.timeOrigin + now);
+            }
+            session.frameCallback = session.video.requestVideoFrameCallback(frame);
+        };
+        session.frameCallback = session.video.requestVideoFrameCallback(frame);
+        const channel = session.timingChannel;
+        channel.onmessage = event => {
+            if (this.session !== session || typeof event.data !== 'string') return;
+            const received = performance.timeOrigin + performance.now();
+            try {
+                const value: unknown = JSON.parse(event.data);
+                if (value && typeof value === 'object' && 'client_sent_ms' in value && typeof value.client_sent_ms === 'number') {
+                    session.latency.sample(value, value.client_sent_ms, received);
+                }
+            } catch { /* A malformed diagnostic cannot interrupt video. */ }
+        };
+        let probes = 0;
+        const ping = () => {
+            if (this.session !== session || session.controller.signal.aborted || channel.readyState !== 'open') return;
+            // Alternate small clock probes and frame metadata so large diagnostic replies cannot bias every clock estimate.
+            if (channel.bufferedAmount < 1024) channel.send(JSON.stringify({ client_sent_ms: performance.timeOrigin + performance.now(), include_frames: probes % 2 === 1 }));
+            session.timingTimer = setTimeout(ping, probes++ < 9 ? 30 : 1000);
+        };
+        channel.onopen = ping;
+        if (channel.readyState === 'open') ping();
+    }
 
 	/** Keep the old argument for callers; cleanup uses the original peer's URL. */
 	async disconnect(_legacyDeleteUrl?: string): Promise<void> {

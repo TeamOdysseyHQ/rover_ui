@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { selectCameraMode } from '../src/lib/services/cameraStreamProfile.js';
-import { JpegQualityController } from '../src/lib/services/jpegQualityController.js';
 import { WebRtcStatsSampler } from '../src/lib/services/webRtcMetrics.ts';
 
 const formats = [
@@ -27,18 +26,7 @@ test('advertised FPS remains visible when the stream ceiling is lower', () => {
     assert.equal(result.advertisedFps, 120);
 });
 
-test('JPEG adaptation reduces quality first and recovers slowly per camera', () => {
-    const slow = new JpegQualityController(85);
-    const healthy = new JpegQualityController(85);
-    assert.equal(slow.update(10, 30), 85);
-    slow.update(10, 30);
-    assert.equal(slow.update(10, 30), 75);
-    assert.equal(healthy.quality, 85);
-    for (let i = 0; i < 5; i++) assert.equal(slow.update(30, 30), 75);
-    assert.equal(slow.update(30, 30), 80);
-    for (let i = 0; i < 50; i++) slow.update(0, 30);
-    assert.equal(slow.quality, 35);
-});
+
 
 test('mode selection does not synthesize 60 FPS when 30 is the supported rate below the ceiling', () => {
     const result = selectCameraMode([{ fourcc: 'MJPG', resolutions: [{ width: 640, height: 480, frame_rates: [120, 30] }] }], 640, 480);
@@ -80,4 +68,13 @@ test('FPS counters changing from received to decoded use a new baseline', () => 
     sampler.sample(stats({ framesDecoded: undefined, framesReceived: 100 }));
     assert.equal(sampler.sample(stats({ timestamp: 2000, framesDecoded: 24, framesReceived: 148 })), null);
     assert.equal(sampler.sample(stats({ timestamp: 4000, framesDecoded: 72, framesReceived: 196 })).fps, 24);
+});
+
+test('camera resolution uses advertised fallback and discards a stale selection', async () => {
+    const { cameraResolutions, selectCameraResolution } = await import('../src/lib/services/cameraStreamProfile.js');
+    const onlyVga = [{ fourcc: 'YUYV', resolutions: [{ width: 640, height: 480, frame_rates: [30] }] }];
+    assert.deepEqual(selectCameraResolution(onlyVga, undefined, '640x480'), { width: 640, height: 480 });
+    assert.deepEqual(selectCameraResolution(onlyVga, { width: 1280, height: 720 }), { width: 640, height: 480 });
+    assert.deepEqual(cameraResolutions(onlyVga), [{ width: 640, height: 480 }]);
+    assert.deepEqual(selectCameraResolution(formats, undefined, '1280x720'), { width: 1280, height: 720 });
 });

@@ -4,3 +4,7 @@ node_modules
 /docs/publication/
 /build-audit.log
 
+# Local agent context and credentials
+/AGENTS.md
+/.local/
+/.scratch/

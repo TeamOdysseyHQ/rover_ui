@@ -9,7 +9,6 @@ export const fullscreenLayout = writable(1);
 /**
  * Array of slot configurations for the fullscreen camera view.
  * cameraType: 'hardware' | 'ros'
- * streamMode: 'mjpeg' | 'websocket' | 'webrtc'
  */
 export const fullscreenSlots = writable([
 	{
@@ -18,7 +17,6 @@ export const fullscreenSlots = writable([
 		cameraType: 'hardware',
 		cameraName: '',
 		topicName: '/camera/camera/color/image_raw',
-		streamMode: 'mjpeg',
 		fps: 30,
 		quality: 80
 	}

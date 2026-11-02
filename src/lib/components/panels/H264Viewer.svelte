@@ -1,0 +1,106 @@
+<script lang="ts">
+  import { tick } from 'svelte';
+  import { WebRtcStreamClient, type WebRtcMetrics } from '$lib/services/webRtcStreamClient';
+  import { OpticalFlowService, type OpticalFlowResult } from '$lib/services/opticalFlowService';
+
+  let { offerUrl, targetFps = 60, diagnostics = false }: {
+    offerUrl: string; targetFps?: number; diagnostics?: boolean;
+  } = $props();
+  let video = $state<HTMLVideoElement>();
+  let state = $state('connecting');
+  let error = $state('');
+  let metrics = $state<WebRtcMetrics | null>(null);
+  let flowEnabled = $state(false);
+  let flowResult = $state<OpticalFlowResult | null>(null);
+  const flow = new OpticalFlowService();
+
+  $effect(() => {
+    const endpoint = offerUrl;
+    const fps = targetFps;
+    let cancelled = false;
+    let client: WebRtcStreamClient | null = null;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    async function connect() {
+      await tick();
+      if (cancelled || !video) return;
+      const current = new WebRtcStreamClient();
+      client = current;
+      metrics = null;
+      error = '';
+      state = 'connecting';
+      let failed = false;
+      const failure = (reason: Error & { status?: number }) => {
+        if (cancelled || client !== current || failed || reason.name === 'AbortError') return;
+        failed = true;
+        state = 'error';
+        error = reason.message;
+        void current.disconnect();
+        // Capacity and stopped cameras require an operator action, not another transport.
+        if (![400, 404, 409, 429].includes(reason.status ?? 0) && failures++ < 3) {
+          retry = setTimeout(() => { void connect(); }, 2000);
+        }
+      };
+      current.onStateChange(value => {
+        if (!cancelled && client === current) state = value;
+      });
+      current.onMetrics(value => {
+        if (!cancelled && client === current) { metrics = value; if (value.fps > 0) failures = 0; }
+      });
+      current.onError(failure);
+      try { await current.connect(endpoint, video, fps); }
+      catch (reason) { failure(reason instanceof Error ? reason : new Error(String(reason))); }
+    }
+    void connect();
+    return () => {
+      cancelled = true;
+      clearTimeout(retry);
+      void client?.disconnect();
+      flow.stopAll();
+    };
+  });
+
+  $effect(() => {
+    if (!diagnostics || !flowEnabled || state !== 'connected' || !video) return;
+    const element = video;
+    let cancelled = false;
+    void flow.initialize().then(() => {
+      if (!cancelled) flow.start('viewer', element, result => { if (!cancelled) flowResult = result; });
+    }).catch(reason => { error = String(reason); flowEnabled = false; });
+    return () => { cancelled = true; flow.stopAll(); flowResult = null; };
+  });
+</script>
+
+<div class="relative w-full h-full min-h-40 bg-black" data-camera-viewer>
+  <video bind:this={video} autoplay muted playsinline class="w-full h-full object-contain" aria-label="Rover camera feed"></video>
+  <div class="absolute top-2 left-2 rounded bg-black/80 px-2 py-1 text-xs text-white pointer-events-none">
+    {state === 'connected' && (metrics?.fps ?? 0) > 0 ? 'LIVE' : state === 'connected' ? 'Waiting for frames' : state}
+    · H.264
+  </div>
+  <div class="absolute top-2 right-2 rounded bg-black/80 px-2 py-1 text-xs font-mono text-white pointer-events-none">
+    {metrics ? metrics.fps.toFixed(1) : '—'} / {metrics?.targetFps ?? targetFps} FPS
+  </div>
+  {#if metrics}
+    <div class="absolute bottom-2 left-2 rounded bg-black/80 px-2 py-1 text-xs font-mono text-white pointer-events-none">
+      {(metrics.bitrateBps / 1e6).toFixed(2)} Mb/s
+      {#if metrics.latencyMs != null}
+        · {metrics.latencyMs.toFixed(1)} ms buffer → browser
+        <span title="Half of the best clock-probe round trip; clock asymmetry and drift can add error">~{metrics.clockUncertaintyMs?.toFixed(1)} ms clock estimate</span>
+      {/if}
+    </div>
+  {/if}
+  {#if error}
+    <div role="alert" class="absolute inset-x-2 bottom-10 rounded bg-red-950/90 p-2 text-xs text-red-100">{error}</div>
+  {/if}
+  {#if diagnostics}
+    <label class="absolute bottom-2 right-2 rounded bg-black/80 px-2 py-1 text-xs text-white">
+      <input type="checkbox" bind:checked={flowEnabled} /> Optical flow
+    </label>
+  {/if}
+  {#if flowEnabled && flowResult}
+    <div class="absolute top-10 left-2 rounded bg-black/80 px-2 py-1 text-xs font-mono text-white pointer-events-none">
+      {flowResult.trackedPoints} tracks · dx {flowResult.meanDx.toFixed(2)} · dy {flowResult.meanDy.toFixed(2)} px/frame
+      <div>Band dy: {flowResult.topMeanDy?.toFixed(2) ?? '—'} / {flowResult.middleMeanDy?.toFixed(2) ?? '—'} / {flowResult.bottomMeanDy?.toFixed(2) ?? '—'}</div>
+    </div>
+  {/if}
+</div>

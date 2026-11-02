@@ -27,7 +27,6 @@
         cameraType: 'hardware',
         cameraId: '',
         topicName: '/camera/camera/color/image_raw',
-        streamType: 'mjpeg',
         resolution: '720p'
       }));
       fullscreenSlots.update(s => [...s, ...newSlots]);

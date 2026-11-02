@@ -4,7 +4,7 @@
  */
 
 // Shared by the request service, connection store, and connection form.
-export const DEFAULT_API_URL = 'http://192.168.1.3:6767';
+export const DEFAULT_API_URL = import.meta.env?.VITE_ROVER_API_URL || 'http://192.168.1.3:6767';
 let API_BASE_URL = DEFAULT_API_URL;
 
 export function setApiBaseUrl(url) {
@@ -604,12 +604,7 @@ export async function captureCameraImage(cameraName, telemetry = {}, expeditionI
     return await response.json();
 }
 
-/**
- * Get camera stream URL (MJPEG)
- */
-export function getCameraStreamUrl(cameraName, fps = 30, quality = 80) {
-    return `${API_BASE_URL}/api/nav/cameras/${cameraName}/stream?fps=${fps}&quality=${quality}`;
-}
+
 
 /**
  * Get camera WebRTC offer URL
@@ -706,14 +701,7 @@ export async function getRosCameraWebRtcStatus() {
     return apiRequest('/api/nav/ros/camera/webrtc/status', { method: 'GET' });
 }
 
-/**
- * Get ROS camera WebSocket stream URL
- */
-export function getRosCameraWebSocketUrl(quality = 85, fps = 30) {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = API_BASE_URL.replace(/^https?:\/\//, '');
-    return `${protocol}//${host}/api/nav/ros/camera/ws?quality=${quality}&fps=${fps}`;
-}
+
 
 /**
  * Send WebRTC offer for the science microscope
@@ -751,28 +739,11 @@ export async function getMicroscopeWebRtcStatus() {
     return apiRequest('/api/sci/microscope/webrtc/status', { method: 'GET' });
 }
 
-/**
- * Get camera WebSocket stream URL
- */
-export function getCameraWebSocketUrl(cameraName, quality = 85, fps = 30) {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = API_BASE_URL.replace(/^https?:\/\//, '');
-    return `${protocol}//${host}/api/nav/cameras/${cameraName}/ws?quality=${quality}&fps=${fps}`;
-}
 
-/**
- * Get WebSocket streaming status for all cameras
- */
-export async function getWebSocketStatus() {
-    return apiRequest('/api/nav/cameras/ws/status', { method: 'GET' });
-}
 
-/**
- * Get WebSocket streaming status for specific camera
- */
-export async function getCameraWebSocketStatus(cameraName) {
-    return apiRequest(`/api/nav/cameras/${cameraName}/ws/status`, { method: 'GET' });
-}
+
+
+
 
 // ============================================
 // MICROSCOPE ENDPOINTS (/api/sci/microscope/)
@@ -823,12 +794,7 @@ export async function getMicroscopeStatus() {
     return apiRequest('/api/sci/microscope/status', { method: 'GET' });
 }
 
-/**
- * Get microscope MJPEG stream URL
- */
-export function getMicroscopeStreamUrl(fps = 30, quality = 80) {
-    return `${API_BASE_URL}/api/sci/microscope/stream?fps=${fps}&quality=${quality}`;
-}
+
 
 /**
  * Capture microscope image with metadata
@@ -973,16 +939,7 @@ export async function getLatestRosCameraImage(topicName = null) {
     return apiRequest(`/api/nav/ros/camera/latest${params}`, { method: 'GET' });
 }
 
-/**
- * Get ROS camera MJPEG stream URL
- */
-export function getRosCameraStreamUrl(topicName = null, fps = 30, quality = 80) {
-    const params = new URLSearchParams();
-    if (topicName) params.set('topic_name', topicName);
-    params.set('fps', fps.toString());
-    params.set('quality', quality.toString());
-    return `${API_BASE_URL}/api/nav/ros/camera/stream?${params.toString()}`;
-}
+
 
 /**
  * Unsubscribe from ROS camera topic

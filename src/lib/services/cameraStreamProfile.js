@@ -1,8 +1,22 @@
 export const MAX_STREAM_FPS = 60;
 
+/** Retain a selected size only while the camera still advertises it. */
+export function cameraResolutions(formats) {
+    return [...new Map((formats ?? []).filter(format => ['MJPG', 'YUYV'].includes(format.fourcc))
+        .flatMap(format => format.resolutions ?? []).map(size => [`${size.width}x${size.height}`, { width: size.width, height: size.height }])).values()];
+}
+
+export function selectCameraResolution(formats, preferred, detected = '1280x720') {
+    const sizes = cameraResolutions(formats);
+    const same = size => preferred && size.width === preferred.width && size.height === preferred.height;
+    return sizes.find(same) ?? sizes.find(size => `${size.width}x${size.height}` === detected)
+        ?? sizes.find(size => size.width === 1280 && size.height === 720) ?? sizes[0]
+        ?? { width: 1280, height: 720 };
+}
+
 /** Select the fastest advertised pixel format at the requested resolution. */
 export function selectCameraMode(formats, width, height, fallbackFps = 30) {
-    const modes = (formats ?? []).flatMap(format => (format.resolutions ?? [])
+    const modes = (formats ?? []).filter(format => ['MJPG', 'YUYV'].includes(format.fourcc)).flatMap(format => (format.resolutions ?? [])
         .filter(size => size.width === width && size.height === height)
         .flatMap(size => (size.frame_rates ?? []).map(fps => ({ fps, pixelFormat: format.fourcc }))));
     const valid = modes.filter(mode => Number.isFinite(mode.fps) && mode.fps > 0 && /^[A-Z0-9]{4}$/.test(mode.pixelFormat));
