@@ -165,21 +165,26 @@ export class WebRtcStreamClient {
 			await abortable(pc.setLocalDescription(offer), signal);
 			await waitForPeer(pc, 'icegatheringstatechange', () => pc.iceGatheringState === 'complete', signal);
 			signal.throwIfAborted();
-			const response = await abortable(fetch(offerUrl, {
+			// Finish the bounded HTTP exchange after local cancellation so a late
+			// peer ID can still be released during rapid fullscreen transitions.
+			const negotiation = fetch(offerUrl, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ sdp: pc.localDescription!.sdp, type: pc.localDescription!.type, fps }),
-				signal,
-			}), signal);
-			const answer = await abortable(response.json().catch(() => ({})), signal);
+				signal: AbortSignal.timeout(this.timeoutMs),
+			}).then(async response => {
+				const answer = await response.json().catch(() => ({}));
+				if (typeof answer.peer_id === 'string' && answer.peer_id) {
+					const url = new URL(offerUrl);
+					url.pathname = url.pathname.replace(/\/offer\/?$/, '') + '/connections/' + encodeURIComponent(answer.peer_id);
+					if (typeof answer.topic === 'string') url.searchParams.set('topic_name', answer.topic);
+					current.deleteUrl = url.toString();
+					if (signal.aborted || this.session !== current) void this.release(current);
+				}
+				return { response, answer };
+			});
+			const { response, answer } = await abortable(negotiation, signal);
 			if (!response.ok) throw Object.assign(new Error(answer.detail ?? errorMessage(response.status)), { status: response.status });
-			if (typeof answer.peer_id === 'string' && answer.peer_id) {
-				const url = new URL(offerUrl);
-				url.pathname = url.pathname.replace(/\/offer\/?$/, '') + '/connections/' + encodeURIComponent(answer.peer_id);
-				if (typeof answer.topic === 'string') url.searchParams.set('topic_name', answer.topic);
-				current.deleteUrl = url.toString();
-
-			}
 			if (Number.isFinite(answer.target_fps) && answer.target_fps > 0) current.targetFps = answer.target_fps;
 			signal.throwIfAborted();
 			await abortable(pc.setRemoteDescription({ type: answer.type, sdp: answer.sdp }), signal);

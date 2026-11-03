@@ -3,8 +3,8 @@
   import { WebRtcStreamClient, type WebRtcMetrics } from '$lib/services/webRtcStreamClient';
   import { OpticalFlowService, type OpticalFlowResult } from '$lib/services/opticalFlowService';
 
-  let { offerUrl, targetFps = 60, diagnostics = false }: {
-    offerUrl: string; targetFps?: number; diagnostics?: boolean;
+  let { offerUrl, targetFps = 60, diagnostics = false, suspended = false }: {
+    offerUrl: string; targetFps?: number; diagnostics?: boolean; suspended?: boolean;
   } = $props();
   let video = $state<HTMLVideoElement>();
   let state = $state('connecting');
@@ -17,6 +17,12 @@
   $effect(() => {
     const endpoint = offerUrl;
     const fps = targetFps;
+    if (suspended) {
+      state = 'paused';
+      metrics = null;
+      error = '';
+      return;
+    }
     let cancelled = false;
     let client: WebRtcStreamClient | null = null;
     let retry: ReturnType<typeof setTimeout> | undefined;

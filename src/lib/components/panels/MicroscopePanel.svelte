@@ -1,5 +1,6 @@
 <script lang="ts">
   import { apiStatus, roverApiUrl } from '$lib/stores/apiStore';
+  import { isFullscreen } from '$lib/stores/fullscreenStore';
   import { currentExpeditionId, isExpeditionActive, expeditionStore } from '$lib/stores/expeditionStore';
   import * as api from '$lib/services/roverApi';
   import H264Viewer from './H264Viewer.svelte';
@@ -43,5 +44,5 @@
   </header>
   {#if error}<p role="alert" class="text-sm text-red-400">{error}</p>{/if}
   {#if notice}<p role="status" class="text-sm text-green-400">{notice}</p>{/if}
-  <div class="aspect-video bg-black">{#if active}<H264Viewer offerUrl={`${api.getApiBaseUrl()}/api/sci/microscope/webrtc/offer`} targetFps={30} />{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">Microscope stopped</div>{/if}</div>
+  <div class="aspect-video bg-black">{#if active}<H264Viewer offerUrl={`${api.getApiBaseUrl()}/api/sci/microscope/webrtc/offer`} targetFps={30} suspended={$isFullscreen} />{:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">Microscope stopped</div>{/if}</div>
 </section>

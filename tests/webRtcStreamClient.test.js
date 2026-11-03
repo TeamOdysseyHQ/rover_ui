@@ -196,3 +196,30 @@ test('streamless track events attach video and clear it on disconnect', async (t
     await client.disconnect();
     assert.equal(video.srcObject, null);
 });
+
+test('a cancelled HTTP offer releases its late server peer without closing a replacement', async t => {
+    let resolveOld;
+    const deletes = [];
+    let offers = 0;
+    t.mock.method(globalThis, 'fetch', (url, options) => {
+        if (options.method === 'DELETE') {
+            deletes.push(url);
+            return Promise.resolve({ ok: true });
+        }
+        if (++offers === 1) return new Promise(resolve => { resolveOld = resolve; });
+        return Promise.resolve({ ok: true, json: async () => ({ type: 'answer', sdp: 'new', peer_id: 'new-viewer' }) });
+    });
+    const client = new WebRtcStreamClient();
+    const old = assert.rejects(client.connect(offerUrl, { srcObject: null }), { name: 'AbortError' });
+    await settle();
+    await client.disconnect();
+    await old;
+    const replacement = client.connect(offerUrl, { srcObject: null });
+    await settle();peers[1].changeState('connected');await replacement;
+    resolveOld({ ok: true, json: async () => ({ type: 'answer', sdp: 'old', peer_id: 'old-viewer' }) });
+    await settle();
+    assert.deepEqual(deletes, [offerUrl.replace('/offer', '/connections/old-viewer')]);
+    assert.equal(client.getState(), 'connected');
+    assert.equal(peers[1].closed, false);
+    await client.disconnect();
+});

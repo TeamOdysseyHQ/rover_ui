@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { apiStatus, roverApiUrl } from '$lib/stores/apiStore';
+  import { isFullscreen } from '$lib/stores/fullscreenStore';
   import { expeditionStore, currentExpeditionId, isExpeditionActive } from '$lib/stores/expeditionStore';
   import * as api from '$lib/services/roverApi';
   import { cameraResolutions, selectCameraMode, selectCameraResolution } from '$lib/services/cameraStreamProfile.js';
@@ -32,13 +33,18 @@
       cameras = result.cameras ?? [];
       active = new Set(cameras.filter(c => c.active).map(c => c.name));
       await Promise.all(cameras.map(async camera => {
-        const capabilities = await api.getSupportedResolutions(camera.name);
+        const [capabilities, status] = await Promise.all([
+          api.getSupportedResolutions(camera.name),
+          camera.active ? api.getCameraStatus(camera.name) : Promise.resolve(null)
+        ]);
         if (!mounted || attempt !== epoch) return;
         formats.set(camera.name, capabilities.formats ?? []);
-        sizes.set(camera.name, selectCameraResolution(capabilities.formats, sizes.get(camera.name), camera.default_resolution));
+        const running = status?.camera;
+        sizes.set(camera.name, running?.active ? { width: running.width, height: running.height }
+          : selectCameraResolution(capabilities.formats, sizes.get(camera.name), camera.default_resolution));
         const size = sizes.get(camera.name)!;
         const mode = selectCameraMode(capabilities.formats, size.width, size.height, camera.default_fps);
-        rates.set(camera.name, mode.fps);
+        rates.set(camera.name, running?.active ? running.fps : mode.fps);
       }));
       formats = new Map(formats); sizes = new Map(sizes); rates = new Map(rates);
     } catch (reason) { if (mounted && attempt === epoch) error = message(reason); }
@@ -123,7 +129,7 @@
           </div>
         </header>
         <div class="aspect-video bg-black">
-          {#if active.has(camera.name)}<H264Viewer offerUrl={api.getCameraWebRtcOfferUrl(camera.name)} targetFps={rates.get(camera.name) ?? 60} diagnostics />
+          {#if active.has(camera.name)}<H264Viewer offerUrl={api.getCameraWebRtcOfferUrl(camera.name)} targetFps={rates.get(camera.name) ?? 60} suspended={$isFullscreen} diagnostics />
           {:else}<div class="flex h-full items-center justify-center text-sm text-muted-foreground">Camera stopped</div>{/if}
         </div>
         <label class="flex items-center justify-between px-3 py-2 text-xs text-muted-foreground">Resolution

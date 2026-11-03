@@ -807,12 +807,9 @@ export async function captureMicroscopeImage(metadata, expeditionId = null) {
         formData.append('expedition_id', expeditionId);
     }
     
-    formData.append('latitude', metadata.latitude);
-    formData.append('longitude', metadata.longitude);
-    formData.append('altitude', metadata.altitude);
-    formData.append('battery_level', metadata.battery_level);
-    formData.append('mission_id', metadata.mission_id);
-    formData.append('rover_id', metadata.rover_id);
+    for (const key of ['latitude', 'longitude', 'altitude', 'battery_level', 'mission_id', 'rover_id']) {
+        if (metadata[key] != null) formData.append(key, String(metadata[key]));
+    }
     formData.append('note', metadata.note || '');
     formData.append('tags', 'microscope,science'); // Auto-tags
     

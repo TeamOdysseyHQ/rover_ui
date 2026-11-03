@@ -6,7 +6,7 @@ import { test } from 'node:test';
 const source=readFileSync(new URL('../src/lib/components/panels/H264Viewer.svelte',import.meta.url),'utf8').split('<script lang="ts">')[1].split('</script>')[0].replace(/^\s*import\s[\s\S]*?from\s*['"][^'"]+['"];?/gm,'');
 const script=stripTypeScriptTypes(source)+'\nglobalThis.h={video(v){video=v;},state:()=>state,error:()=>error,metrics:()=>metrics};';
 const settle=()=>new Promise(setImmediate);
-function setup(){
+function setup(props={}){
  const effects=[],peers=[],timers=[],flow=[];
  class Peer{
   constructor(){peers.push(this);}
@@ -14,7 +14,7 @@ function setup(){
   connect(){return new Promise((resolve,reject)=>{this.resolve=resolve;this.reject=reject;});}
   async disconnect(){this.closed=true;}
  }
- const context={$props:()=>({offerUrl:'http://rover/offer',targetFps:60}),$state:v=>v,$effect:fn=>effects.push(fn),tick:async()=>{},WebRtcStreamClient:Peer,OpticalFlowService:class{stopAll(){flow.push('stop');}initialize(){flow.push('load');return Promise.resolve();}start(){flow.push('start');}},setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout(){}};
+ const context={$props:()=>({offerUrl:'http://rover/offer',targetFps:60,...props}),$state:v=>v,$effect:fn=>effects.push(fn),tick:async()=>{},WebRtcStreamClient:Peer,OpticalFlowService:class{stopAll(){flow.push('stop');}initialize(){flow.push('load');return Promise.resolve();}start(){flow.push('start');}},setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout(){}};
  runInNewContext(script,context);context.h.video({});const cleanup=effects[0]();effects[1]();
  return{h:context.h,peers,timers,flow,cleanup};
 }
@@ -29,4 +29,8 @@ test('callback and rejected negotiation schedule only one recovery',async()=>{
 });
 test('ordinary viewing leaves optical-flow diagnostics unloaded',async()=>{
  const{flow,cleanup}=setup();await settle();assert.ok(!flow.includes('load'));cleanup();
+});
+
+test('suspended background viewer does not create a WebRTC peer',async()=>{
+ const{h,peers,flow}=setup({suspended:true});await settle();assert.equal(peers.length,0);assert.equal(h.state(),'paused');assert.ok(!flow.includes('load'));
 });

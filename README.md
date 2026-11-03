@@ -18,9 +18,12 @@ Camera control. The default API address is `http://192.168.1.3:6767`. Set
 Update the API and UI together. The API's README lists the native GStreamer
 packages required on the rover.
 
-Fullscreen slots use the same player and share the camera's encoder. Closing a
-slot releases only its viewer. Stop the camera before changing a mode shared by
-other viewers. Microscope and ROS camera panels use the same H.264 player.
+Fullscreen pauses the background players and attaches to an already running
+camera at its current capture mode. Exiting reconnects the normal player.
+Closing a slot releases only its viewer, including an offer that finishes after
+the slot closes. Stop the camera before changing a mode shared by other viewers.
+Microscope and ROS camera panels use the same H.264 player. ROS slots use their
+configured topic, and disconnecting a ROS player releases only its own peer.
 
 The player shows received FPS and bitrate. When timestamp callbacks are available,
 it also estimates source-buffer-to-browser latency. Small clock probes and frame
@@ -32,9 +35,19 @@ Optical flow is optional and remains off until enabled. Its track count and
 motion measurements appear in the video overlay. It does not correct rolling
 shutter or prove that a video is free of geometric distortion.
 
-Run `npm test` and `npm run build` for local checks. Final hardware verification,
-fullscreen sharing, and latency measurements on the rover remain pending after
-the final changes. The onboard production API has not been replaced.
+Run `npm test` and `npm run build` for local checks. On 3 November 2026, live
+checks passed four fullscreen entry/exit cycles at 480p, five transitions during
+pending offers, Kreo snapshots, and shared ROS test-image viewing. Each fullscreen
+handoff retained one active viewer. The Kreo delivered about 60 FPS at 720p with
+no reported RTP loss or decoded-frame drops.
+
+A steady 30-second run measured 35.4 ms median and 37.5 ms p95
+source-buffer-to-browser delay. After repeated view changes, a run measured
+45.9 ms median and 77.6 ms p95. These clock-corrected estimates exclude exposure
+and display scanout. The onboard API service now runs the new H.264 release;
+its [camera setup and rollback notes](https://github.com/TeamOdysseyHQ/RoverAPI_Endpoint/blob/master/README.md#camera-video)
+describe the deployment. Physical microscope and camera/IMU motion tests remain
+unverified.
 
 ## Earlier camera diagnostics
 
