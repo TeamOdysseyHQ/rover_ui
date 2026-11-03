@@ -54,11 +54,13 @@ were observed during those worker runs, and active diagnostics retained about
 60 FPS video delivery. These timings describe UI responsiveness.
 
 Visible Chrome on this workstation needed `google-chrome --disable-gpu` to avoid
-intermittent 1–2 second frame-readback stalls in its accelerated path. This is a
+intermittent 1–2 second video/canvas stalls in its accelerated path. This is a
 local browser workaround; it does not change system graphics settings. Three
 720p60 fullscreen cycles then retained one viewer, stopped diagnostics while
 fullscreen was open, and resumed tracking after exit. Rapid toggles and disabling
-the last diagnostic also released the worker.
+the last diagnostic also released the worker. A visible 30-second run with this
+workaround delivered about 59.9 FPS with no dropped display frames. Active
+diagnostics measured 0.8 ms p95 UI scheduling delay.
 
 Run `npm test` and `npm run build` for local checks. On 3 November 2026, live
 checks passed four fullscreen entry/exit cycles at 480p, five transitions during
