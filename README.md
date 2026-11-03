@@ -31,9 +31,34 @@ metadata travel over an unordered WebRTC data channel. Exposure, camera-internal
 buffering, and display scanout are outside this measurement. Clock estimates and
 latency metrics do not control or delay video frames.
 
-Optical flow is optional and remains off until enabled. Its track count and
-motion measurements appear in the video overlay. It does not correct rolling
-shutter or prove that a video is free of geometric distortion.
+Optical flow is optional and remains off until enabled. OpenCV loading, resizing,
+pixel readback, and tracking run in one shared Web Worker. Supported browsers
+transfer a decoded `VideoFrame`; other supported browsers use an image bitmap.
+Only one analysis frame can be in flight across all cameras, and samples are
+capped at 15 FPS. Busy analysis drops samples instead of queuing old frames.
+Hidden tabs release tracking references. Disabling the last diagnostic or leaving
+its viewer terminates the worker and releases its runtime.
+
+Track counts and motion measurements appear in the video overlay. This requires
+Web Workers and OffscreenCanvas. Unsupported diagnostics report an error while
+video playback continues. Optical flow does not correct rolling shutter or prove
+that a video is free of geometric distortion.
+
+A live Kreo comparison on 3 November 2026 measured a 119 ms main-thread long task
+while the previous OpenCV implementation loaded and about 10 ms per tracking
+sample. In matched 10-second development measurements, moving analysis and
+readback to the worker reduced the UI timer's p95 scheduling delay from 10.1 ms
+to 0.5 ms. The production bundle measured 1.4 ms with diagnostics active, with
+about 0.1 ms p95 spent transferring a video frame. No main-thread long tasks
+were observed during those worker runs, and active diagnostics retained about
+60 FPS video delivery. These timings describe UI responsiveness.
+
+Visible Chrome on this workstation needed `google-chrome --disable-gpu` to avoid
+intermittent 1–2 second frame-readback stalls in its accelerated path. This is a
+local browser workaround; it does not change system graphics settings. Three
+720p60 fullscreen cycles then retained one viewer, stopped diagnostics while
+fullscreen was open, and resumed tracking after exit. Rapid toggles and disabling
+the last diagnostic also released the worker.
 
 Run `npm test` and `npm run build` for local checks. On 3 November 2026, live
 checks passed four fullscreen entry/exit cycles at 480p, five transitions during

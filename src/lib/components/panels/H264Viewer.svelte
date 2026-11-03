@@ -69,10 +69,13 @@
   $effect(() => {
     if (!diagnostics || !flowEnabled || state !== 'connected' || !video) return;
     const element = video;
+    error = '';
     let cancelled = false;
     void flow.initialize().then(() => {
-      if (!cancelled) flow.start('viewer', element, result => { if (!cancelled) flowResult = result; });
-    }).catch(reason => { error = String(reason); flowEnabled = false; });
+      if (!cancelled) flow.start('viewer', element,
+        result => { if (!cancelled) flowResult = result; },
+        reason => { if (!cancelled) { error = `Optical flow: ${reason.message}`; flowEnabled = false; } });
+    }).catch(reason => { if (!cancelled) { error = String(reason); flowEnabled = false; } });
     return () => { cancelled = true; flow.stopAll(); flowResult = null; };
   });
 </script>
