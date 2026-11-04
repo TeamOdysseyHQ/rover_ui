@@ -80,7 +80,7 @@ test('blank frames, duplicate frames and media discontinuities re-seed safely', 
     service.stopAll(); assert.equal(live.size, 0);
 });
 
-test('rejected tracks never enter reported or next-frame points; empty bands are unavailable', () => {
+test('rejected tracks never enter reported points; empty bands are unavailable and trigger re-detection', () => {
     const { service, state, live, process } = setup();
     process(1);
     state.previousPoints.delete();
@@ -104,7 +104,10 @@ test('rejected tracks never enter reported or next-frame points; empty bands are
     const result = process(1.04);
     assert.equal(result.trackedPoints, 34);
     assert.equal(result.points.length, 34);
-    assert.equal(state.previousPoints.rows, 34);
+    // Every accepted track is in the top band, so the next reference is a fresh grid detection.
+    assert.ok(state.previousPoints.rows > 34);
+    const reseeded = Array.from({ length: state.previousPoints.rows }, (_, i) => state.previousPoints.floatAt(i, 1));
+    assert.ok(reseeded.some(y => y >= 160), 'reseed covers the lower bands');
     assert.equal(result.meanDx, 3); assert.equal(result.meanDy, 2);
     assert.equal(result.topPoints, 34);
     assert.equal(result.middleMeanDy, null); assert.equal(result.bottomMeanDy, null);
@@ -128,4 +131,26 @@ test('worker boundary accepts the installed OpenCV bindings and rejects incomple
     assert.equal(isCvRuntime(cv), true);
     assert.equal(isCvRuntime(null), false);
     assert.equal(isCvRuntime({ Mat() {} }), false);
+});
+
+test('feature detection spreads tracks over the image instead of the most textured region', () => {
+    const service = new OpticalFlowProcessor(cv);
+    const gray = new cv.Mat(height, width, cv.CV_8UC1);
+    try {
+        for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+            const noise = ((Math.imul(x + 1, 73856093) ^ Math.imul(y + 1, 19349663)) >>> 9) % 256;
+            // Top-left quarter: full-contrast texture. Elsewhere: faint texture that still has corners.
+            gray.ucharPtr(y, x)[0] = x < 160 && y < 120 ? noise : 100 + (noise >> 2);
+        }
+        const points = service.detectFeatures(gray);
+        try {
+            const ys = Array.from({ length: points.rows }, (_, i) => points.floatAt(i, 1));
+            const xs = Array.from({ length: points.rows }, (_, i) => points.floatAt(i, 0));
+            assert.ok(points.rows <= 240);
+            for (const [low, high] of [[0, 80], [80, 160], [160, 240]]) {
+                assert.ok(ys.filter(y => y >= low && y < high).length >= 20, `band ${low}-${high} has tracks`);
+            }
+            assert.ok(xs.filter((x, i) => x >= 160 || ys[i] >= 120).length >= 120, 'weak regions keep their share');
+        } finally { points.delete(); }
+    } finally { gray.delete(); }
 });
