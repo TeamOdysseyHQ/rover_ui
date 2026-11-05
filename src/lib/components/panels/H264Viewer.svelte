@@ -3,6 +3,7 @@
   import { WebRtcStreamClient, type WebRtcMetrics } from '$lib/services/webRtcStreamClient';
   import { OpticalFlowService, type OpticalFlowResult } from '$lib/services/opticalFlowService';
   import { dejelloHint, dejelloUrlFor, getDejello, updateDejello, type DejelloUpdate, type OnboardDejelloStatus } from '$lib/services/onboardDejello';
+  import { devFlowLog } from '$lib/services/devFlowLog';
 
   let { offerUrl, targetFps = 60, diagnostics = false, suspended = false }: {
     offerUrl: string; targetFps?: number; diagnostics?: boolean; suspended?: boolean;
@@ -79,7 +80,11 @@
     let cancelled = false;
     void flow.initialize().then(() => {
       if (!cancelled) flow.start('viewer', element,
-        result => { if (!cancelled) flowResult = result; },
+        result => {
+          if (cancelled) return;
+          flowResult = result;
+          devFlowLog(result, { camera: offerUrl, fps: metrics?.fps, width: element.videoWidth, height: element.videoHeight });
+        },
         reason => { if (!cancelled) { error = `Optical flow: ${reason.message}`; flowEnabled = false; } });
     }).catch(reason => { if (!cancelled) { error = String(reason); flowEnabled = false; } });
     return () => { cancelled = true; flow.stopAll(); flowResult = null; };
