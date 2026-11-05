@@ -23,7 +23,7 @@ export function isCvRuntime(value: unknown): value is CvRuntime {
             .every(name => typeof Reflect.get(value, name) === 'number');
 }
 
-interface FlowPoint {
+export interface FlowPoint {
     x: number;
     y: number;
     dx: number;
@@ -228,7 +228,9 @@ export class OpticalFlowProcessor {
 
             // Never seed the next LK pass with rejected/out-of-bounds tracks.
             const referencePoints = own(
-                state.frameCount % 30 === 0 || trackedPoints < 30
+                // Re-detect when any third of the image runs short of tracks; readout
+                // estimation compares top, middle and bottom bands.
+                state.frameCount % 30 === 0 || trackedPoints < 30 || bands.some(band => band.length < 8)
                     ? this.detectFeatures(gray)
                     : cv.matFromArray(trackedPoints, 1, cv.CV_32FC2,
                         filteredPoints.flatMap(point => [point.x, point.y]))
@@ -264,12 +266,21 @@ export class OpticalFlowProcessor {
 
             if (!count) return new cv.Mat();
 
-            // Bound LK work on highly textured frames. Strongest corners first.
-            const selected = Array.from({ length: count }, (_, i) => keypoints.get(i))
-                .filter(point => point.pt.x >= 8 && point.pt.y >= 8 &&
-                    point.pt.x < this.processingWidth - 8 && point.pt.y < this.processingHeight - 8)
-                .sort((a, b) => b.response - a.response)
-                .slice(0, 240);
+            // Bound LK work on highly textured frames, but spread it over a grid: the strongest
+            // corners cluster on one textured object and leave image bands with no tracks.
+            const columns = 8, rows = 6, perCell = 5;
+            const cells = new Map<number, ReturnType<typeof keypoints.get>[]>();
+            for (let i = 0; i < count; i++) {
+                const point = keypoints.get(i);
+                if (point.pt.x < 8 || point.pt.y < 8 ||
+                    point.pt.x >= this.processingWidth - 8 || point.pt.y >= this.processingHeight - 8) continue;
+                const cell = Math.floor(point.pt.y * rows / this.processingHeight) * columns +
+                    Math.floor(point.pt.x * columns / this.processingWidth);
+                const list = cells.get(cell);
+                if (list) list.push(point); else cells.set(cell, [point]);
+            }
+            const selected = [...cells.values()].flatMap(list =>
+                list.sort((a, b) => b.response - a.response).slice(0, perCell));
             const points = new cv.Mat(selected.length, 1, cv.CV_32FC2);
             const data = points.data32F;
 

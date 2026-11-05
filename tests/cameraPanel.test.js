@@ -14,7 +14,7 @@ function setup(props={}){
   connect(){return new Promise((resolve,reject)=>{this.resolve=resolve;this.reject=reject;});}
   async disconnect(){this.closed=true;}
  }
- const context={$props:()=>({offerUrl:'http://rover/offer',targetFps:60,...props}),$state:v=>v,$effect:fn=>effects.push(fn),tick:async()=>{},WebRtcStreamClient:Peer,OpticalFlowService:class{stopAll(){flow.push('stop');}initialize(){flow.push('load');return Promise.resolve();}start(){flow.push('start');}},setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout(){}};
+ const context={$props:()=>({offerUrl:'http://rover/offer',targetFps:60,...props}),$state:v=>v,$derived:v=>v,$effect:fn=>effects.push(fn),tick:async()=>{},WebRtcStreamClient:Peer,OpticalFlowService:class{stopAll(){flow.push('stop');}initialize(){flow.push('load');return Promise.resolve();}start(){flow.push('start');}},setTimeout:(fn,delay)=>{timers.push({fn,delay});return timers.length;},clearTimeout(){}};
  runInNewContext(script,context);context.h.video({});const cleanup=effects[0]();effects[1]();
  return{h:context.h,peers,timers,flow,cleanup};
 }
