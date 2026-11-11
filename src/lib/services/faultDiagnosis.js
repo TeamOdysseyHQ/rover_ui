@@ -5,7 +5,7 @@ export function diagnoseStack({ online, apiStatus, apiHealth, rosStatus, network
         const rosFresh = rosStatus?.lastChecked && now - rosStatus.lastChecked < 12000;
         if (rosFresh && rosStatus.status === 'disconnected') return { level: 'error', title: 'On-board ROS bridge unavailable', detail: 'The rover API answers, but reports the ROS bridge disconnected. Inspect rosbridge and ROS service logs on the rover.' };
         const rosConnected = rosFresh && rosStatus.status === 'connected';
-        return { level: rosConnected ? 'ok' : 'unknown', title: rosConnected ? 'API and ROS bridge responding' : 'API responding; ROS not verified', detail: 'This does not verify motor controllers, sensors, camera capture, or command delivery. Check their telemetry and service logs.' };
+        return { level: rosConnected ? 'ok' : 'unknown', title: rosConnected ? 'API and ROS bridge responding' : 'API responding; ROS not verified', detail: '' };
     }
     if (apiStatus === 'disconnected' || apiStatus === 'connecting') return { level: 'unknown', title: apiStatus === 'connecting' ? 'Checking rover API' : 'API connection is disabled', detail: '' };
     if (!defaultTarget) return { level: 'unknown', title: 'Configured API is not responding', detail: 'Network probes below target the rover network at 192.168.1.3. They cannot isolate faults for a different API address.' };

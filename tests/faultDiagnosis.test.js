@@ -6,11 +6,11 @@ const now = 100000;
 const input = { online: true, apiStatus: 'error', apiHealth: { error: 'Failed to fetch' }, now };
 const network = (ids, checkedAt = now) => ({ checkedAt, probes: ['radio20', 'radio21', 'rover', 'api'].map(id => ({ id, reachable: ids.includes(id) })) });
 
-test('local offline evidence wins and healthy API never implies healthy actuators', () => {
+test('local offline evidence wins and fresh API and ROS evidence reports connectivity', () => {
     assert.match(diagnoseStack({ ...input, online: false }).title, /Local device/);
     const healthy = diagnoseStack({ ...input, apiStatus: 'connected', apiHealth: { lastChecked: now, error: null }, rosStatus: { status: 'connected', lastChecked: now } });
     assert.equal(healthy.level, 'ok');
-    assert.match(healthy.detail, /does not verify motor controllers/);
+    assert.equal(healthy.title, 'API and ROS bridge responding');
 });
 
 test('fresh API evidence isolates ROS faults; stale evidence cannot', () => {
