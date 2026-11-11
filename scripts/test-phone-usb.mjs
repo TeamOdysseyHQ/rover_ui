@@ -1,0 +1,50 @@
+import { createPhoneBridge } from './phone-bridge.mjs';
+import { PhoneControl } from '../src/lib/services/phoneControl.js';
+import { ProfiledDriveController } from '../src/lib/services/profiledDriveController.js';
+import { WebSocket } from 'ws';
+import { execFile, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import assert from 'node:assert/strict';
+const exec = promisify(execFile);
+const sdk = process.env.ANDROID_SDK_ROOT ?? process.env.ANDROID_HOME ?? join(homedir(), '.local/opt/android-sdk');
+const adb = process.env.ADB ?? join(sdk, 'platform-tools/adb');
+const app = 'org.skanda.roverjoystick', testApp = `${app}.test`;
+const mappings = (await exec(adb, ['reverse', '--list'])).stdout.trim().split('\n').map(line => line.trim().split(/\s+/));
+const previous = mappings.find(parts => parts.at(-2) === 'tcp:8911')?.at(-1);
+await exec('bash', ['mobile/android/build-device-test.sh']);
+await exec(adb, ['install', '-r', 'mobile/android/build/rover-joystick-tests.apk']);
+const bridge = await createPhoneBridge({ httpPort: 18910, phonePort: 18911 });
+const controller = new ProfiledDriveController({ send: () => { throw Error('ROS forbidden in device test'); }, stop: () => { throw Error('ROS forbidden in device test'); } });
+const phone = new PhoneControl({ request: target => controller.request(target), halt: reason => void controller.halt(reason), resetInputs() {}, snapshot: () => controller.snapshot(),
+    url: 'ws://127.0.0.1:18910/dashboard', createSocket: url => new WebSocket(url, { headers: { Origin: 'http://127.0.0.1:5190' } }) });
+const timer = setInterval(() => controller.tick(performance.now()), 25);
+phone.start();
+const wait = async (predicate, message) => { for (let i = 0; i < 240; i++) { if (predicate()) return; await delay(50); } throw Error(message); };
+let child;
+try {
+    await exec(adb, ['shell', 'am', 'force-stop', app]);
+    await exec(adb, ['reverse', 'tcp:8911', 'tcp:18911']);
+    child = spawn(adb, ['shell', 'am', 'instrument', '-w', `${testApp}/${testApp}.JoystickInstrumentation`]);
+    let output = ''; child.stdout.on('data', value => { output += value; process.stdout.write(value); }); child.stderr.on('data', value => { output += value; process.stderr.write(value); });
+    const finished = new Promise(resolve => child.once('exit', resolve));
+    await wait(() => output.includes('stage=held') || output.includes('FAIL:'), 'No held-joystick stage; unlock the phone');
+    assert.ok(!output.includes('FAIL:'), output);
+    assert.ok(controller.snapshot().target.linear > .7);
+    assert.ok(controller.snapshot().output.linear > 0);
+    await wait(() => output.includes('stage=locked'), 'No lock stage');
+    assert.equal(phone.active, true); assert.ok(controller.snapshot().target.linear > .7);
+    await wait(() => output.includes('stage=unlocked'), 'No unlock stage');
+    await wait(() => controller.snapshot().target.linear === 0, 'Unlock did not request zero');
+    assert.ok(controller.snapshot().output.linear > 0, 'Unlock must decelerate rather than reset output');
+    assert.equal(await finished, 0); assert.ok(output.includes('PASS:'), output);
+    console.log('PASS: real Android view and USB input use the production velocity profile. This isolated test cannot publish ROS commands.');
+} finally {
+    child?.kill(); clearInterval(timer); phone.close(); await bridge.close();
+    await exec(adb, ['shell', 'am', 'force-stop', app]).catch(() => {});
+    if (previous) await exec(adb, ['reverse', 'tcp:8911', previous]);
+    else await exec(adb, ['reverse', '--remove', 'tcp:8911']).catch(() => {});
+    await exec(adb, ['uninstall', testApp]).catch(() => {});
+}

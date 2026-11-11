@@ -1,14 +1,13 @@
-export function diagnoseStack({ online, apiStatus, apiHealth, rosStatus, arduino, network, now = Date.now(), defaultTarget = true }) {
+export function diagnoseStack({ online, apiStatus, apiHealth, rosStatus, network, now = Date.now(), defaultTarget = true }) {
     if (!online) return { level: 'error', title: 'Local device reports offline', detail: 'Check the dashboard device’s Ethernet or Wi-Fi connection. The browser cannot identify which adapter failed.' };
     const freshHealth = apiHealth?.lastChecked && now - apiHealth.lastChecked < 7000 && !apiHealth.error;
     if (apiStatus === 'connected' && freshHealth) {
         const rosFresh = rosStatus?.lastChecked && now - rosStatus.lastChecked < 12000;
         if (rosFresh && rosStatus.status === 'disconnected') return { level: 'error', title: 'On-board ROS bridge unavailable', detail: 'The rover API answers, but reports the ROS bridge disconnected. Inspect rosbridge and ROS service logs on the rover.' };
-        if (arduino?.lastChecked && now - arduino.lastChecked < 12000 && arduino.connected === false) return { level: 'error', title: 'On-board Arduino serial connection unavailable', detail: `The API reports no Arduino connection${arduino.port ? ` on ${arduino.port}` : ''}. Check USB cabling, device presence, serial permissions, and controller power. ROS motor controllers may use a separate connection.` };
         const rosConnected = rosFresh && rosStatus.status === 'connected';
         return { level: rosConnected ? 'ok' : 'unknown', title: rosConnected ? 'API and ROS bridge responding' : 'API responding; ROS not verified', detail: 'This does not verify motor controllers, sensors, camera capture, or command delivery. Check their telemetry and service logs.' };
     }
-    if (apiStatus === 'disconnected' || apiStatus === 'connecting') return { level: 'unknown', title: apiStatus === 'connecting' ? 'Checking rover API' : 'API connection is disabled', detail: 'Connect to the rover to collect API and ROS health evidence.' };
+    if (apiStatus === 'disconnected' || apiStatus === 'connecting') return { level: 'unknown', title: apiStatus === 'connecting' ? 'Checking rover API' : 'API connection is disabled', detail: '' };
     if (!defaultTarget) return { level: 'unknown', title: 'Configured API is not responding', detail: 'Network probes below target the rover network at 192.168.1.3. They cannot isolate faults for a different API address.' };
     if (!network || now - network.checkedAt > 12000) return { level: 'unknown', title: 'API check failed; network evidence unavailable', detail: 'A browser error can mean network loss, blocked requests, or an API failure. UI-server probes are unavailable or stale.' };
     const probes = Object.fromEntries(network.probes.map(probe => [probe.id, probe]));

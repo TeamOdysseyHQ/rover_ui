@@ -6,7 +6,12 @@
     "test": "node --test tests/*.test.js",
     "dev": "vite dev --host",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "phone:bridge": "node scripts/phone-bridge.mjs",
+    "phone:build": "bash mobile/android/build.sh",
+    "phone:benchmark": "node scripts/benchmark-phone.mjs",
+    "phone:test-usb": "node scripts/test-phone-usb.mjs",
+    "phone:test-model": "bash mobile/android/test-model.sh"
   },
   "devDependencies": {
     "@sveltejs/adapter-auto": "^6.1.1",

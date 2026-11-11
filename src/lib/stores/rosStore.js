@@ -1,5 +1,5 @@
 import { writable, derived } from 'svelte/store';
-import * as api from '$lib/services/roverApi.js';
+import * as api from '../services/roverApi.js';
 
 // Commanded velocity (set by DrivingControls on every command dispatch)
 export const commandedVelocity = writable({ linear: 0, angular: 0 });
@@ -13,9 +13,6 @@ export const rosStatus = writable({
 	lastChecked: null
 });
 export const isRosConnected = derived(rosStatus, $status => $status.status === 'connected');
-
-// Teensy topic data
-export const teensyTopicData = writable(null);
 
 // Check ROS status
 export async function checkRosStatus(signal) {
@@ -51,7 +48,7 @@ export async function checkRosStatus(signal) {
 }
 
 // Connect to ROS
-export async function connectToRos(rosUrl) {
+export async function connectToRos() {
 	try {
 		rosStatus.update(s => ({ ...s, status: 'connecting' }));
 		const response = await api.connectToRos();
@@ -108,33 +105,6 @@ export async function publishCmdVel(linearX, angularZ, signal) {
 		console.error('Error publishing cmd_vel:', error);
 		throw error;
 	}
-}
-
-// Start teensy topic updates
-export async function startTeensyTopicUpdates(rate) {
-	const intervalId = setInterval(async () => {
-		try {
-			const response = await api.getTeensyTopic();
-			if (response.success && response.data) {
-				teensyTopicData.set(response.data);
-			}
-		} catch (error) {
-			console.error('Error fetching teensy topic data:', error);
-		}
-	}, rate);
-	
-	return intervalId;
-}
-
-// Stop teensy topic updates
-export async function stopTeensyTopicUpdates(intervalId) {
-	clearInterval(intervalId);
-	try {
-		await api.unsubscribeTeensyTopic();
-	} catch (error) {
-		console.error('Error unsubscribing from teensy topic:', error);
-	}
-	teensyTopicData.set(null);
 }
 
 // Subscribe to odometry

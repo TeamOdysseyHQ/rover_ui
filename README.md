@@ -12,6 +12,124 @@ npm ci
 npm run dev
 ```
 
+## Connect to the rover
+
+Click **Connect** at the top right to connect the rover API and ROS bridge.
+Use the chevron beside **Connect** to change the API URL or connect and disconnect
+the API and ROS bridge separately. These controls stay collapsed until opened.
+
+## Wake the onboard computer
+
+Run the dashboard on the operator computer, which must have Ethernet access to
+the rover network. Select the saved **Rover antenna** connection before opening
+the dashboard. That profile uses `192.168.1.159/24`, no gateway or DNS, and no
+default route, so Wi-Fi can continue to provide internet access.
+
+Keep power supplied to the OptiPlex and both radios. Click **Power on** at the
+top right of the dashboard. The dashboard sends a Wake-on-LAN broadcast for
+the rover OptiPlex, waits up to two minutes for its API, and connects when ready.
+A sent packet alone does not confirm that the computer has started.
+
+Wake-on-LAN requires the dashboard's Node server on the rover LAN. A static page
+or a dashboard server running on the switched-off OptiPlex cannot send the packet.
+The wake control does not shut down or reboot a running computer.
+
+## Driving controls
+
+Driving uses ROS only, with WASD controls and an optional **Motion profile** switch. The switch
+defaults to on. When enabled, a bounded-jerk S-curve shapes every requested
+linear and angular target, including speed reductions and direction changes.
+Acceleration changes continuously, so output may briefly keep rising when a
+lower target arrives during acceleration, before it begins slowing down.
+The dashboard shows requested target, profile output, last sent command,
+and 12-second target/output plots. These are commands, not measured
+rover velocities.
+
+Open **Profile limits** at rest to adjust acceleration and jerk. Linear
+acceleration and braking default to 0.20 m/s² and cannot exceed 0.33 m/s².
+Linear jerk defaults to 0.40 m/s³. Angular acceleration defaults to 0.40 rad/s²
+and angular jerk to 0.80 rad/s³. Targets retain the existing ±1 m/s and ±1 rad/s
+ranges. Profile settings and preview switches are locked while moving.
+
+**Stop normally** requests zero through the profile.
+WASD changes targets by 0.05 per press, repeating every 150 ms while held;
+key release holds the target. Tab requests a normal stop while moving and keeps
+its normal focus-navigation behavior at rest or in editable fields.
+**Emergency stop** or Space resets the command to zero and calls the stop endpoint immediately,
+bypassing the profile and any pending movement request. Focus loss, a hidden
+page, connection changes, and control timing stalls also stop and disarm motion.
+Press Space again or use the same button, now **Resume controls**, to enable
+driving again. Held Space never toggles repeatedly. Release held driving keys
+before sending fresh input; resuming does not restore previous velocity.
+
+Use **Offline preview** to inspect the controls, limits, and plots without sending
+motion or stop commands. Ctrl+O toggles preview at rest. WASD works immediately
+after toggling a checkbox; text and numeric inputs still block driving shortcuts.
+Preview starts enabled and turns on automatically if the ROS driving connection
+is lost. Connecting or reconnecting the API and ROS bridge turns preview off
+automatically and clears simulated targets and held inputs. Fresh input is
+required before driving. A lost live connection still stops and disarms the
+controls; reconnecting preserves that stop latch until you resume controls.
+The previous game mode and cruise lock have been removed.
+This profile runs in the browser. Rover-side enforcement
+and physical acceleration verification still require onboard integration and tests.
+
+## USB phone joystick
+
+`mobile/android` contains the native Android app **Rover Joystick**. Its landscape
+screen has one joystick, a left-side lock button, and linear/angular command
+readouts in black and white. Readouts follow the dashboard's profiled output,
+including offline preview; they are not measured vehicle speed.
+
+Hold the joystick to set the target. While holding it, tap **LOCK** with a second
+finger to hold that target after release. **UNLOCK** requests zero through the
+motion profile. Releasing an unlocked joystick also requests zero. The dashboard
+continues to own profiling and ROS publishing, so the phone does not apply a
+second velocity profile. WASD is disabled while the phone owns the target.
+Desktop normal/emergency stops clear the phone lock. App backgrounding, USB loss,
+and bridge/dashboard loss discard the old input; an active phone disconnect
+stops and disarms driving. Reconnection requires neutral input before a fresh
+gesture. Existing emergency-stop rearming still applies.
+
+Build with JDK 17, Android SDK platform 35 and build-tools 35.0.0. Set
+`ANDROID_SDK_ROOT` if the SDK is outside `~/.local/opt/android-sdk`.
+
+```sh
+npm run phone:build
+adb install -r mobile/android/build/rover-joystick.apk
+npm run phone:bridge
+```
+
+Keep that terminal running, start the dashboard normally in another terminal,
+and open **Rover Joystick** on the authorized USB-debugging phone. The bridge
+binds only to localhost: TCP 8911 for the phone and WebSocket 8910 for one local
+dashboard. It never connects to the rover API itself. Preview remains enabled
+until you explicitly select live control in the dashboard. Locking does not
+survive app exit or reconnection. Stop the app before removing the USB reverse
+mapping with `adb reverse --remove tcp:8911`.
+Keep the dashboard visible. Hiding or suspending it disarms control.
+The bridge restores USB forwarding automatically when a single authorized phone
+connects. ADB must be available in the SDK above, on PATH, or via `ADB`.
+
+Run `npm run phone:benchmark` with the app and dashboard connected to collect
+500 timestamped, command-sized probes over USB. Probes cannot request motion.
+The report is saved to ignored `.local/phone-latency-latest.json`. It contains
+phone-to-computer estimated one-way latency, its clock uncertainty, measured
+phone/computer round-trip latency, and phone/dashboard acknowledgment round-trip
+latency. Clock mapping uses the lowest network RTT in rolling 10-second windows.
+These measurements exclude touchscreen dispatch, the profile's intentional
+delay, ROS publishing, and motor response. Do not call RTT/2 measured one-way
+latency or interpret dashboard acknowledgment as motor execution.
+
+The real-device gesture test is separate from the app. Run
+`npm run phone:test-usb` with the phone unlocked. It builds and temporarily
+installs the instrumentation helper, uses an isolated localhost bridge and the
+production velocity profile with ROS publishing forbidden, and checks landscape
+layout and actual two-pointer lock/release/unlock events. It restores the previous
+ADB mapping and removes the helper afterward. Run `npm run phone:test-model` for input-model checks without Android.
+
+## Camera streaming
+
 Connect to the onboard API in the connection panel, then start Kreo Owl under
 Camera control. The default API address is `http://192.168.1.3:6767`. Set
 `VITE_ROVER_API_URL` before building or starting Vite to use another default.

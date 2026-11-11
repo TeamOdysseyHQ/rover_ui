@@ -6,11 +6,10 @@
     import ROSCameraPanel from '$lib/components/panels/RosCameraPanel.svelte';
 	import CameraPanel from '$lib/components/panels/CameraPanel.svelte';
 	import FullscreenCameraView from '$lib/components/panels/FullscreenCameraView.svelte';
-	import ConnectionPanel from '$lib/components/panels/ConnectionPanel.svelte';
 	import StackHealthPanel from '$lib/components/panels/StackHealthPanel.svelte';
 	import CommandLog from '$lib/components/panels/CommandLog.svelte';
-	import RosStatusPanel from '$lib/components/panels/RosStatusPanel.svelte';
-	import TeensyTopicPanel from '$lib/components/panels/TeensyTopicPanel.svelte';
+	import * as Drawer from '$lib/components/ui/drawer';
+	import { Terminal } from '@lucide/svelte';
 	import ArmControlPanel from '$lib/components/panels/ArmControlPanel.svelte';
 	import MotorRpmPanel from '$lib/components/panels/MotorRpmPanel.svelte';
 	
@@ -26,8 +25,8 @@
 	import WaypointsModal from '$lib/components/modals/WaypointsModal.svelte';
 	import RouteAnalysisModal from '$lib/components/modals/RouteAnalysisModal.svelte';
 	
-	// Science Drawer & Button
-	import ScienceButton from '$lib/components/controls/ScienceButton.svelte';
+	// Tools and drawers
+	import DashboardTools from '$lib/components/controls/DashboardTools.svelte';
 	import ScienceDrawer from '$lib/components/drawers/ScienceDrawer.svelte';
 	
 	// Modal visibility state
@@ -37,6 +36,7 @@
 	
 	// Science drawer state
 	let showScienceDrawer = $state(false);
+	let showApiLog = $state(false);
 	let microscopeActive = $state(false);
 	
 	// Feedback message state
@@ -107,17 +107,11 @@
 		
 		<main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 			<div class="space-y-6 xl:col-span-1">
-				<ConnectionPanel />
 				<StackHealthPanel />
-				
-				<!-- <TeensyTopicPanel /> -->
-				
 			</div>
 
             <div class="space-y-6">
-				<RosStatusPanel />
 				<MotorRpmPanel />
-				<CommandLog />
             </div>
 
             <div class="space-y-6">
@@ -160,9 +154,9 @@
 	{routeAnalysis}
 />
 
-<!-- Science Drawer & Button -->
-<ScienceButton 
-	onclick={() => showScienceDrawer = true}
+<DashboardTools
+	onOpenScience={() => { showApiLog = false; showScienceDrawer = true; }}
+	onOpenLog={() => { showScienceDrawer = false; showApiLog = true; }}
 	{microscopeActive}
 />
 
@@ -170,6 +164,16 @@
 	bind:show={showScienceDrawer}
 	bind:microscopeActive={microscopeActive}
 />
+
+<Drawer.Root bind:open={showApiLog}>
+	<Drawer.Overlay onclick={() => showApiLog = false} />
+	<Drawer.Content>
+		<Drawer.Header onClose={() => showApiLog = false}>
+			<Drawer.Title><span class="flex items-center gap-2"><Terminal class="w-5 h-5" />API Activity Log</span></Drawer.Title>
+		</Drawer.Header>
+		<div class="overflow-y-auto p-6 flex-1"><CommandLog /></div>
+	</Drawer.Content>
+</Drawer.Root>
 
 <style>
 	:global(.card) {

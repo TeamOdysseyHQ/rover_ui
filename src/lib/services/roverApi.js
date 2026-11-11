@@ -841,14 +841,14 @@ export async function getRosStatus(signal) {
  * Connect to ROS manually
  */
 export async function connectToRos() {
-    return apiRequest('/api/ros/connect', { method: 'POST' });
+    return apiRequest('/api/ros/connect', { method: 'POST', timeoutMs: 10000 });
 }
 
 /**
  * Disconnect from ROS
  */
 export async function disconnectFromRos() {
-    return apiRequest('/api/ros/disconnect', { method: 'POST' });
+    return apiRequest('/api/ros/disconnect', { method: 'POST', timeoutMs: 5000 });
 }
 
 /**
@@ -881,27 +881,6 @@ export async function subscribeToOdometry() {
  */
 export async function getOdometry() {
     return apiRequest('/api/nav/ros/odom', { method: 'GET' });
-}
-
-/**
- * Get latest teensy topic data
- */
-export async function getTeensyTopic() {
-    return apiRequest('/api/o/teensy_topic', { method: 'GET' });
-}
-
-/**
- * Unsubscribe from teensy topic
- */
-export async function unsubscribeTeensyTopic() {
-    return apiRequest('/api/o/teensy_topic/unsubscribe', { method: 'POST' });
-}
-
-/**
- * Debug teensy topic state
- */
-export async function debugTeensyTopic() {
-    return apiRequest('/api/o/teensy_topic/debug', { method: 'GET' });
 }
 
 /**
@@ -994,64 +973,4 @@ export async function getAllEndpoints() {
             other: []
         };
     }
-}
-
-// ============================================
-// ARDUINO NAVIGATION ENDPOINTS (/api/nav/arduino/)
-// ============================================
-
-/**
- * Connect to Arduino
- */
-export async function connectArduino() {
-    return apiRequest('/api/nav/arduino/connect', { method: 'POST' });
-}
-
-/**
- * Disconnect from Arduino
- */
-export async function disconnectArduino() {
-    return apiRequest('/api/nav/arduino/disconnect', { method: 'POST' });
-}
-
-/**
- * Get Arduino connection status
- */
-export async function getArduinoStatus(signal) {
-    return apiRequest('/api/nav/arduino/status', { method: 'GET', signal, timeoutMs: 3000 });
-}
-
-/**
- * Send raw command to Arduino (W, S, A, D, X)
- */
-export async function sendArduinoCommand(command, signal) {
-    return apiRequest('/api/nav/arduino/cmd', {
-        method: 'POST',
-        body: JSON.stringify({ command }),
-        signal
-    });
-}
-
-/**
- * Send direction to Arduino (forward, backward, left, right, stop)
- */
-export async function sendArduinoDirection(direction) {
-    return apiRequest('/api/nav/arduino/direction', {
-        method: 'POST',
-        body: JSON.stringify({ direction })
-    });
-}
-
-/**
- * Send stop command to Arduino
- */
-export async function stopArduino() {
-    return apiRequest('/api/nav/arduino/stop', { method: 'POST' });
-}
-
-/**
- * Reconnect to Arduino
- */
-export async function reconnectArduino() {
-    return apiRequest('/api/nav/arduino/reconnect', { method: 'POST' });
 }

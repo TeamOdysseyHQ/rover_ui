@@ -13,10 +13,10 @@ test('local offline evidence wins and healthy API never implies healthy actuator
     assert.match(healthy.detail, /does not verify motor controllers/);
 });
 
-test('fresh API evidence isolates ROS and Arduino faults; stale evidence cannot', () => {
+test('fresh API evidence isolates ROS faults; stale evidence cannot', () => {
     const healthy = { ...input, apiStatus: 'connected', apiHealth: { lastChecked: now }, rosStatus: { status: 'disconnected', lastChecked: now } };
     assert.match(diagnoseStack(healthy).title, /ROS bridge unavailable/);
-    assert.match(diagnoseStack({ ...healthy, rosStatus: { status: 'connected', lastChecked: now }, arduino: { connected: false, port: '/dev/ttyACM0', lastChecked: now } }).detail, /ttyACM0/);
+    assert.equal(diagnoseStack({ ...healthy, rosStatus: { status: 'connected', lastChecked: now } }).level, 'ok');
     assert.equal(diagnoseStack({ ...healthy, rosStatus: { status: 'disconnected', lastChecked: now - 20000 } }).level, 'unknown');
     assert.equal(diagnoseStack({ ...healthy, rosStatus: { status: 'unknown', lastChecked: now, error: 'timeout' } }).level, 'unknown');
     assert.equal(diagnoseStack({ ...healthy, apiHealth: { lastChecked: now - 20000 } }).level, 'unknown');

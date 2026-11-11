@@ -1,12 +1,7 @@
 <script lang="ts">
 	import { apiStatus } from '$lib/stores/apiStore';
 	import { Badge } from '$lib/components/ui/badge';
-	
-	interface Props {
-		activeMission?: string;
-	}
-	
-	let { activeMission = 'general' }: Props = $props();
+	import ConnectionControls from '$lib/components/controls/ConnectionControls.svelte';
 	
 	// Get current date/time reactively
 	let currentTime = $state(new Date());
@@ -31,21 +26,11 @@
 		}).toUpperCase();
 	};
 	
-	const getMissionName = (mission: string) => {
-		const missionMap: Record<string, string> = {
-			'general': 'General Operations',
-			'abex': 'ABEx - Astrobiology Expedition',
-			'rado': 'RADO - Reconnaissance & Delivery',
-			'idmo': 'IDMO - Instrument Deployment'
-		};
-		return missionMap[mission] || 'General Operations';
-	};
 </script>
 
-<header class="flex justify-between items-center mb-8 pb-6 border-b border-border">
+<header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 pb-5 border-b border-border">
 	<div>
-		<h1 class="text-3xl font-bold text-foreground tracking-tight mb-1">Skanda Command Center</h1>
-		<p class="text-sm text-sky-400 font-medium mb-3">{getMissionName(activeMission)}</p>
+		<h1 class="text-3xl font-bold text-foreground tracking-tight mb-3">Skanda Command Center</h1>
 		<div class="flex items-center gap-4 text-sm">
 			<div class="flex items-center gap-2">
 				<span class="text-muted-foreground font-medium">API:</span>
@@ -56,4 +41,5 @@
 			<span class="text-muted-foreground font-mono text-xs">{formatTime(currentTime)}</span>
 		</div>
 	</div>
+	<div class="self-end sm:self-auto"><ConnectionControls /></div>
 </header>

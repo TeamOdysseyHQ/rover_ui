@@ -170,7 +170,6 @@
 					<Gauge class="w-5 h-5 text-sky-400" />
 					Motor RPM Monitor
 				</Card.Title>
-				<p class="text-xs text-muted-foreground mt-0.5">6-wheel API readings · 5 Hz</p>
 			</div>
 			<div class="flex items-center gap-2">
 				<Badge variant={isRunning ? 'default' : 'secondary'} class="text-xs">

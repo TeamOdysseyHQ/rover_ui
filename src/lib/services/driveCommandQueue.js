@@ -2,6 +2,8 @@
 export class DriveCommandQueue {
     constructor(send, onError) { this.send = send; this.onError = onError; this.pending = null; this.stopPending = null; this.running = null; }
 
+    clear() { this.pending = this.stopPending = null; }
+
     submit(command) {
         if (command.linear === 0 && command.angular === 0) {
             this.stopPending = command;
