@@ -194,6 +194,28 @@ its [camera setup and rollback notes](https://github.com/TeamOdysseyHQ/RoverAPI_
 describe the deployment. Physical microscope and camera/IMU motion tests remain
 unverified.
 
+## IMU-aided rolling-shutter correction (onboard)
+
+**IMU de-jello** removes rolling-shutter shear and wobble caused by camera rotation.
+It runs entirely on the rover computer, and BNO055 gyro data never leaves it.
+RoverAPI relays `/imu/data` from the local rosbridge to the camera worker. The
+worker then:
+
+1. Calibrates onboard: optical flow on the raw frames is regressed against
+   integrated gyro rotation, giving the IMU-to-camera mapping, the exposure time
+   offset and the readout time.
+2. Resamples each frame before H.264 encoding, so every viewer receives
+   corrected video.
+
+The dashboard only toggles the feature and shows a summary through
+`GET/POST /api/nav/cameras/{name}/dejello`. To calibrate, tick **IMU de-jello**
+and then pan, tilt and rock the camera until the panel shows a fit. The
+calibration is saved on the rover per camera.
+
+Only rotation is corrected. The firmware samples the gyro at about 30 Hz, so
+vibration above about 15 Hz cannot be resolved. Motion blur is not removed. The
+browser-side **Optical flow** overlay remains a separate, video-only diagnostic.
+
 ## Earlier camera diagnostics
 
 The sections below record the earlier optical-flow work. References to old
