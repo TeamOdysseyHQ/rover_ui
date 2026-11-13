@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { motorRpmSample } from '$lib/stores/motorRpmStore.js';
+  import { watchMotorRpms } from '$lib/stores/motorRpmStore.js';
   import { X, Wifi, LayoutGrid } from '@lucide/svelte';
   import { commandedVelocity } from '$lib/stores/rosStore';
   import { isFullscreen, fullscreenLayout, fullscreenSlots } from '$lib/stores/fullscreenStore';
-  import { detectCameras } from '$lib/services/roverApi';
+  import { getCameraInventory } from '$lib/services/roverApi';
   import FullscreenCameraSlot from './FullscreenCameraSlot.svelte';
 
   // ─── State ────────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@
 
   // ─── Motor RPM polling ────────────────────────────────────────────────────
   function startRpmPolling() {
-    rpmInterval = motorRpmSample.subscribe(sample => {
+    rpmInterval = watchMotorRpms(sample => {
       if (mounted) rpms = sample.data || {};
     });
   }
@@ -64,7 +64,7 @@
   // ─── Mount / Destroy ──────────────────────────────────────────────────────
   async function fetchCameras() {
     try {
-      const result = await detectCameras();
+      const result = await getCameraInventory();
       if (result && result.cameras) {
         const hwCams = result.cameras.map((c) => ({
           ...c,

@@ -6,10 +6,14 @@
 // Shared by the request service, connection store, and connection form.
 export const DEFAULT_API_URL = import.meta.env?.VITE_ROVER_API_URL || 'http://192.168.1.3:6767';
 let API_BASE_URL = DEFAULT_API_URL;
+let cameraInventory;
+let cameraDiscovery;
 let reportRequests = new AbortController();
 
 export function setApiBaseUrl(url) {
     cancelReportRequests();
+    cameraInventory = undefined;
+    cameraDiscovery = undefined;
     API_BASE_URL = url.trim().replace(/\/+$/, '');
 }
 
@@ -497,9 +501,19 @@ export async function testApi(data = {}) {
 /**
  * Detect all connected cameras
  */
-export async function detectCameras(maxCameras = 10, signal) {
+export function detectCameras(maxCameras = 10, signal) {
+    if (cameraDiscovery) return cameraDiscovery;
+    const baseUrl = API_BASE_URL;
     const params = `?max_cameras=${maxCameras}`;
-    return apiRequest(`/api/nav/cameras/detect${params}`, { method: 'GET', signal, timeoutMs: 30000 });
+    const pending = apiRequest(`/api/nav/cameras/detect${params}`, { method: 'GET', signal, timeoutMs: 30000 })
+        .then(result => { if (cameraDiscovery === pending && API_BASE_URL === baseUrl) cameraInventory = result; return result; })
+        .finally(() => { if (cameraDiscovery === pending) cameraDiscovery = undefined; });
+    cameraDiscovery = pending;
+    return pending;
+}
+
+export function getCameraInventory() {
+    return cameraInventory ? Promise.resolve(cameraInventory) : detectCameras();
 }
 
 /**

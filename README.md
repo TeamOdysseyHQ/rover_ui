@@ -136,6 +136,17 @@ ADB mapping and removes the helper afterward. Run `npm run phone:test-model` for
 
 ## Camera streaming
 
+Camera discovery returns formats and running modes in one response. Normal and
+fullscreen views share the inventory. Use **Scan for cameras** after adding or
+removing a device; reconnecting also refreshes the inventory.
+
+The RPM panel's **Stop** button stops its monitoring. Stack health observes the
+last result without keeping the reader alive. Fullscreen uses one shared reader
+while its RPM display is open. Hidden tabs pause RPM reads, and covered charts
+are unmounted. Chart history adds each API sample once, using its message ID.
+API receipt age describes when rosbridge delivered a message, not when the motor
+controller measured it.
+
 Connect to the onboard API in the connection panel, then start Kreo Owl under
 Camera control. The default API address is `http://192.168.1.3:6767`. Set
 `VITE_ROVER_API_URL` before building or starting Vite to use another default.

@@ -7,7 +7,7 @@
   import { cameraResolutions, selectCameraMode, selectCameraResolution } from '$lib/services/cameraStreamProfile.js';
   import H264Viewer from './H264Viewer.svelte';
 
-  type Camera = { name: string; device_path: string; default_fps: number; active: boolean; default_resolution: string };
+  type Camera = { name: string; device_path: string; default_fps: number; active: boolean; default_resolution: string; formats?: Format[]; camera?: Size & { active: boolean; fps: number } };
   type Size = { width: number; height: number };
   type Format = { fourcc: string; resolutions: Array<Size & { frame_rates?: number[] }> };
   let cameras = $state<Camera[]>([]);
@@ -23,19 +23,19 @@
   let epoch = 0;
 
   function message(reason: unknown) { return reason instanceof Error ? reason.message : String(reason); }
-  async function detectCameras() {
+  async function detectCameras(refresh = true) {
     const attempt = ++epoch;
     scanning = true;
     error = '';
     try {
-      const result = await api.detectCameras();
+      const result = await (refresh ? api.detectCameras() : api.getCameraInventory());
       if (!mounted || attempt !== epoch) return;
       cameras = result.cameras ?? [];
       active = new Set(cameras.filter(c => c.active).map(c => c.name));
       await Promise.all(cameras.map(async camera => {
         const [capabilities, status] = await Promise.all([
-          api.getSupportedResolutions(camera.name),
-          camera.active ? api.getCameraStatus(camera.name) : Promise.resolve(null)
+          camera.formats ? Promise.resolve({ formats: camera.formats }) : api.getSupportedResolutions(camera.name),
+          camera.camera ? Promise.resolve({ camera: camera.camera }) : camera.active ? api.getCameraStatus(camera.name) : Promise.resolve(null)
         ]);
         if (!mounted || attempt !== epoch) return;
         formats.set(camera.name, capabilities.formats ?? []);
@@ -97,12 +97,12 @@
   $effect(() => {
     const url = $roverApiUrl;
     const connected = $apiStatus === 'connected';
-    untrack(() => { if (mounted && connected) void detectCameras(); else { epoch++; active = new Set(); } });
+    untrack(() => { if (mounted && connected) void detectCameras(false); else { epoch++; active = new Set(); } });
     return () => untrack(() => { epoch++; active = new Set(); });
   });
   onMount(() => {
     mounted = true;
-    if ($apiStatus === 'connected') void detectCameras();
+    if ($apiStatus === 'connected') void detectCameras(false);
     return () => { mounted = false; epoch++; };
   });
 </script>
@@ -111,7 +111,7 @@
   <div class="flex flex-wrap justify-between items-center gap-3 rounded-lg border border-border bg-card p-4">
     <div><h2 class="font-semibold">Camera control</h2><p class="text-xs text-muted-foreground">H.264 · Low latency · Up to 720p60</p></div>
     <div class="flex gap-2">
-      <button class="rounded bg-secondary px-3 py-2 text-sm disabled:opacity-40" onclick={detectCameras} disabled={scanning || $apiStatus !== 'connected'}>{scanning ? 'Scanning…' : 'Scan for cameras'}</button>
+      <button class="rounded bg-secondary px-3 py-2 text-sm disabled:opacity-40" onclick={() => detectCameras()} disabled={scanning || $apiStatus !== 'connected'}>{scanning ? 'Scanning…' : 'Scan for cameras'}</button>
       <button class="rounded bg-destructive px-3 py-2 text-sm disabled:opacity-40" onclick={stopAllCameras} disabled={!active.size}>Stop all</button>
     </div>
   </div>

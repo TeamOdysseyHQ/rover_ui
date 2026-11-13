@@ -53,7 +53,7 @@
         <div class="text-xs flex justify-between"><span>Dashboard device</span><span>{online ? 'Browser online' : 'Browser offline'}{loopLag > 250 ? ` · UI delayed ${loopLag} ms` : ''}</span></div>
         <div class="text-xs flex justify-between"><span>API round trip</span><span>{$apiHealth.latencyMs === null ? 'Unverified' : `${$apiHealth.latencyMs} ms`}</span></div>
         {#if $apiHealth.error}<p class="text-xs text-red-400 break-words">{$apiHealth.error}</p>{/if}
-        <div class="text-xs flex justify-between"><span>Motor RPM API read</span><span>{$motorRpmSample.fetchedAt && now - $motorRpmSample.fetchedAt < 2000 ? 'Returned data; source age unknown' : 'Unavailable'}</span></div>
+        <div class="text-xs flex justify-between"><span>Motor RPM telemetry</span><span>{!$motorRpmSample.polling ? 'Monitoring paused' : !$motorRpmSample.data ? 'Unavailable' : $motorRpmSample.ageMs === null ? 'Source age unknown' : `API receipt age ${Math.max(0, Math.round($motorRpmSample.ageMs + now - $motorRpmSample.fetchedAt))} ms`}</span></div>
         {#if $motorRpmSample.error && $apiStatus === 'connected'}<p class="text-xs text-muted-foreground">{$motorRpmSample.error}</p>{/if}
         {#if network}
             <div class="space-y-1 border-t border-border pt-2">

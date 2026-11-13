@@ -37,7 +37,10 @@
           let camera = status.camera;
           if (!camera.active) {
             const [requestedWidth, requestedHeight] = size === '1080p' ? [1920, 1080] : size === '480p' ? [640, 480] : [1280, 720];
-            const modes = await api.getSupportedResolutions(name);
+            const inventory = await api.getCameraInventory();
+            if (cancelled) return;
+            const cached = inventory.cameras?.find(camera => camera.name === name);
+            const modes = cached?.formats ? cached : await api.getSupportedResolutions(name);
             if (cancelled) return;
             const { width, height } = selectCameraResolution(modes.formats, { width: requestedWidth, height: requestedHeight });
             const profile = selectCameraMode(modes.formats, width, height, 30);

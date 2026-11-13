@@ -4,12 +4,13 @@ import { stripTypeScriptTypes } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
 import * as api from '../src/lib/services/roverApi.js';
+import { selectCameraMode, selectCameraResolution } from '../src/lib/services/cameraStreamProfile.js';
 const settle = () => new Promise(setImmediate);
 function slot(config, overrides = {}, duplicate = false) {
  const source = readFileSync(new URL('../src/lib/components/panels/FullscreenCameraSlot.svelte', import.meta.url), 'utf8')
   .split('<script lang="ts">')[1].split('</script>')[0].replace(/^\s*import\s[\s\S]*?from\s*['"][^'"]+['"];?/gm, '');
  const effects = [], calls = [];
- const context = { $props: () => ({ config, duplicate }), $bindable: () => {}, $state: value => value,
+ const context = { selectCameraMode, selectCameraResolution, $props: () => ({ config, duplicate }), $bindable: () => {}, $state: value => value,
   $effect: fn => effects.push(fn), $apiStatus: 'connected', $roverApiUrl: 'http://rover', untrack: fn => fn(), tick: async () => {},
   api: { getCameraStatus: async name => { calls.push(['status', name]); return { camera: { active: true, width: 640, height: 480, fps: 30 } }; },
    getSupportedResolutions: async () => { throw Error('Running source should not be renegotiated'); },
@@ -39,6 +40,12 @@ test('closing a fullscreen slot during status discovery cannot start a camera', 
  let resolve;
  const s = slot({ cameraId: 'kreo', isConfigured: true }, { getCameraStatus: () => new Promise(r => { resolve = r; }) });
  s.cleanup();resolve({ camera: { active: false } });await settle();assert.equal(s.result().ready, false);
+});
+test('an inactive fullscreen camera reuses the discovered formats', async () => {
+ let started;
+ const formats=[{fourcc:'MJPG',resolutions:[{width:1280,height:720,frame_rates:[30]}]}];
+ const s=slot({cameraId:'kreo',isConfigured:true,resolution:'720p'},{getCameraStatus:async()=>({camera:{active:false}}),getCameraInventory:async()=>({cameras:[{name:'kreo',formats}]}),startCamera:async(name,width,height,fps)=>{started={name,width,height,fps};return{camera:{active:true,width,height,fps}};}});
+ await settle();assert.equal(s.result().ready,true);assert.deepEqual(started,{name:'kreo',width:1280,height:720,fps:30});s.cleanup();
 });
 test('microscope capture omits missing metadata so FastAPI defaults apply', async () => {
  const original = globalThis.fetch;

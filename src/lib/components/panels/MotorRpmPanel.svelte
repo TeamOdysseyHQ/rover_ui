@@ -1,15 +1,15 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { browser } from '$app/environment';
-	import { motorRpmSample } from '$lib/stores/motorRpmStore.js';
+	import { watchMotorRpms } from '$lib/stores/motorRpmStore.js';
+	import { isFullscreen } from '$lib/stores/fullscreenStore.js';
 	import { Activity, RefreshCw, Gauge, Play, Square } from '@lucide/svelte';
 	import * as Card from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 
 	// ── constants ────────────────────────────────────────────────────────────
-	const POLL_INTERVAL_MS = 200; // 5 Hz
-	const MAX_POINTS = 60; // Up to 12 seconds of successful API readings at 5 Hz
+	const MAX_POINTS = 60;
 
 	const WHEEL_KEYS = ['front_left', 'front_right', 'mid_left', 'mid_right', 'rear_left', 'rear_right'] as const;
 	const WHEEL_LABELS = ['FL', 'FR', 'ML', 'MR', 'RL', 'RR'];
@@ -38,8 +38,9 @@
 	let history = $state<(number | null)[][]>(WHEEL_KEYS.map(() => []));
 	let timeLabels = $state<string[]>([]);
 
-	let pollTimer: (() => void) | null = null;
-	let mounted = false;
+	let mounted = $state(false);
+	let visible = $state(true);
+	let lastSampleId: string | null = null;
 
 	// ── chart data (derived) ─────────────────────────────────────────────────
 	let chartData = $derived({
@@ -106,30 +107,32 @@
 		timeLabels = newLabels;
 		history = newHistory;
 
-		WHEEL_KEYS.forEach((key) => {
-			current[key] = Number.isFinite(data[key]) ? data[key] : null;
-		});
 		lastUpdateTime = new Date();
 	}
 
 	function start() {
-		if (!mounted || isRunning) return;
 		isRunning = true;
-		pollTimer = motorRpmSample.subscribe(sample => {
-			if (!mounted || !isRunning) return;
-			lastError = sample.error;
-			if (sample.data) pushData(sample.data);
-			else WHEEL_KEYS.forEach(key => { current[key] = null; });
-		});
 	}
 
 	function stop() {
-		pollTimer?.();
-		pollTimer = null;
 		isRunning = false;
 	}
 
+	$effect(() => {
+		if (!mounted || !isRunning || !visible || $isFullscreen) return;
+		return untrack(() => watchMotorRpms(sample => {
+			lastError = sample.error;
+			if (sample.data) {
+				WHEEL_KEYS.forEach(key => { current[key] = Number.isFinite(sample.data[key]) ? sample.data[key] : null; });
+				const id = sample.sampleId ?? JSON.stringify(WHEEL_KEYS.map(key => sample.data[key]));
+				if (id !== lastSampleId) { lastSampleId = id; pushData(sample.data); }
+			}
+			else WHEEL_KEYS.forEach(key => { current[key] = null; });
+		}));
+	});
+
 	function clearData() {
+		lastSampleId = null;
 		history = WHEEL_KEYS.map(() => []);
 		timeLabels = [];
 		WHEEL_KEYS.forEach((key) => { current[key] = null; });
@@ -141,6 +144,9 @@
 	// ── lifecycle ─────────────────────────────────────────────────────────────
 	onMount(() => {
 		mounted = true;
+		const visibility = () => { visible = !document.hidden; };
+		visibility();
+		document.addEventListener('visibilitychange', visibility);
 		start();
 		void (async () => {
 			const { Line } = await import('svelte-chartjs');
@@ -158,7 +164,7 @@
 			if (!mounted) return;
 			LineChart = Line;
 		})().catch(error => { if (mounted) lastError = error.message; });
-		return () => { mounted = false; stop(); };
+		return () => { mounted = false; document.removeEventListener('visibilitychange', visibility); };
 	});
 </script>
 
@@ -217,7 +223,7 @@
 					<span class="text-sm">Press Start to begin monitoring</span>
 				{/if}
 			</div>
-		{:else if LineChart}
+		{:else if LineChart && visible && !$isFullscreen}
 			<div class="h-52 w-full">
 				<LineChart data={chartData} options={chartOptions} />
 			</div>
