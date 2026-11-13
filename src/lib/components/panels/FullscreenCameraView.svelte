@@ -41,6 +41,12 @@
     syncLayoutSlots(val);
   }
 
+  function sourceKey(slot) {
+    if (!slot.isConfigured) return '';
+    const camera = slot.cameraId ?? slot.cameraName;
+    return camera === 'ros' ? `ros:${slot.topicName || '/camera/camera/color/image_raw'}` : camera;
+  }
+
   // ─── Motor RPM polling ────────────────────────────────────────────────────
   function startRpmPolling() {
     rpmInterval = motorRpmSample.subscribe(sample => {
@@ -127,6 +133,7 @@
         <FullscreenCameraSlot 
           bind:config={$fullscreenSlots[i]}
           {availableCameras}
+          duplicate={$fullscreenSlots.slice(0, i).some(other => sourceKey(other) && sourceKey(other) === sourceKey(slot))}
         />
       </div>
     {/each}

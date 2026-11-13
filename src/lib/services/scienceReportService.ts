@@ -4,7 +4,7 @@
  * Handles API calls for generating and downloading science reports with inference data.
  */
 
-const API_BASE = 'http://10.103.111.189:6767';
+import { fetchReport } from './roverApi.js';
 
 export interface ReportResponse {
 	success: boolean;
@@ -66,7 +66,8 @@ export async function generateReport(
 			body.force_generate = forceGenerate;
 		}
 		
-		const response = await fetch(`${API_BASE}/api/sci/reports`, {
+		const response = await fetchReport(`/api/sci/reports`, {
+			timeoutMs: 60000,
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -95,7 +96,7 @@ export async function generateReport(
  */
 export async function downloadReportById(reportId: string): Promise<Blob | null> {
 	try {
-		const response = await fetch(`${API_BASE}/api/sci/report/${reportId}`, {
+		const response = await fetchReport(`/api/sci/report/${reportId}`, {
 			method: 'GET'
 		});
 
@@ -116,29 +117,19 @@ export async function downloadReportById(reportId: string): Promise<Blob | null>
  */
 export async function downloadReportByPath(reportPath: string): Promise<Blob | null> {
 	try {
-		// Try GET method with query parameter first
-		const response = await fetch(`${API_BASE}/api/sci/report/by_path?path=${encodeURIComponent(reportPath)}`, {
+		const response = await fetchReport(`/api/sci/report/by_path?path=${encodeURIComponent(reportPath)}`, {
 			method: 'GET'
 		});
 
 		if (!response.ok) {
-			console.log('[ScienceReport] GET by_path failed, trying POST fallback');
-			// Fallback to POST method
-			return downloadReport(undefined, reportPath);
+			throw new Error(`HTTP error! status: ${response.status}`);
 		}
 
 		const blob = await response.blob();
 		return blob;
 	} catch (error) {
 		console.error('[ScienceReport] Download by path error:', error);
-		// Try POST fallback on error
-		try {
-			console.log('[ScienceReport] Attempting POST fallback');
-			return await downloadReport(undefined, reportPath);
-		} catch (fallbackError) {
-			console.error('[ScienceReport] POST fallback also failed:', fallbackError);
-			return null;
-		}
+		return null;
 	}
 }
 
@@ -147,7 +138,7 @@ export async function downloadReportByPath(reportPath: string): Promise<Blob | n
  */
 export async function downloadReport(reportId?: string, reportPath?: string): Promise<Blob | null> {
 	try {
-		const response = await fetch(`${API_BASE}/api/sci/get_report`, {
+		const response = await fetchReport(`/api/sci/get_report`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -175,7 +166,7 @@ export async function downloadReport(reportId?: string, reportPath?: string): Pr
  */
 export async function listReportIds(): Promise<string[]> {
 	try {
-		const response = await fetch(`${API_BASE}/api/sci/reports/ids`, {
+		const response = await fetchReport(`/api/sci/reports/ids`, {
 			method: 'GET'
 		});
 
@@ -208,10 +199,10 @@ export function triggerDownload(blob: Blob, filename: string): void {
 /**
  * Get detailed metadata for all reports
  */
-export async function getReportsMetadata(): Promise<ReportMetadata[]> {
+export async function getReportsMetadata(signal?: AbortSignal): Promise<ReportMetadata[]> {
 	try {
-		const response = await fetch(`${API_BASE}/api/sci/reports/metadata`, {
-			method: 'GET'
+		const response = await fetchReport(`/api/sci/reports/metadata`, {
+			method: 'GET', signal
 		});
 
 		if (!response.ok) {
@@ -231,7 +222,7 @@ export async function getReportsMetadata(): Promise<ReportMetadata[]> {
  */
 export async function deleteReport(reportId: string): Promise<boolean> {
 	try {
-		const response = await fetch(`${API_BASE}/api/sci/report/${reportId}`, {
+		const response = await fetchReport(`/api/sci/report/${reportId}`, {
 			method: 'DELETE'
 		});
 

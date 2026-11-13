@@ -4,7 +4,7 @@
  * Handles API calls for generating and downloading navigation reconnaissance reports.
  */
 
-const API_BASE = 'http://10.103.111.189:6767';
+import { fetchReport } from './roverApi.js';
 
 export interface NavReportResponse {
 	success: boolean;
@@ -66,7 +66,8 @@ export async function generateNavReport(
 			body.force_generate = forceGenerate;
 		}
 		
-		const response = await fetch(`${API_BASE}/api/nav/nav_reports`, {
+		const response = await fetchReport(`/api/nav/nav_reports`, {
+			timeoutMs: 60000,
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -95,7 +96,7 @@ export async function generateNavReport(
  */
 export async function downloadNavReportById(reportId: string): Promise<Blob | null> {
 	try {
-		const response = await fetch(`${API_BASE}/api/nav/nav_report/${reportId}`, {
+		const response = await fetchReport(`/api/nav/nav_report/${reportId}`, {
 			method: 'GET'
 		});
 
@@ -116,7 +117,7 @@ export async function downloadNavReportById(reportId: string): Promise<Blob | nu
  */
 export async function listNavReportIds(): Promise<string[]> {
 	try {
-		const response = await fetch(`${API_BASE}/api/nav/nav_reports/ids`, {
+		const response = await fetchReport(`/api/nav/nav_reports/ids`, {
 			method: 'GET'
 		});
 
@@ -151,7 +152,7 @@ export function triggerNavDownload(blob: Blob, filename: string): void {
  */
 export async function getNavReportsMetadata(): Promise<NavReportMetadata[]> {
 	try {
-		const response = await fetch(`${API_BASE}/api/nav/nav_reports/metadata`, {
+		const response = await fetchReport(`/api/nav/nav_reports/metadata`, {
 			method: 'GET'
 		});
 
@@ -172,7 +173,7 @@ export async function getNavReportsMetadata(): Promise<NavReportMetadata[]> {
  */
 export async function deleteNavReport(reportId: string): Promise<boolean> {
 	try {
-		const response = await fetch(`${API_BASE}/api/nav/nav_report/${reportId}`, {
+		const response = await fetchReport(`/api/nav/nav_report/${reportId}`, {
 			method: 'DELETE'
 		});
 

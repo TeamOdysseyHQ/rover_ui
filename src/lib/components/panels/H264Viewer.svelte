@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { WebRtcStreamClient, type WebRtcMetrics } from '$lib/services/webRtcStreamClient';
   import { OpticalFlowService, type OpticalFlowResult } from '$lib/services/opticalFlowService';
 
@@ -7,20 +7,59 @@
     offerUrl: string; targetFps?: number; diagnostics?: boolean; suspended?: boolean;
   } = $props();
   let video = $state<HTMLVideoElement>();
+  let hidden = $state(typeof document !== 'undefined' && document.hidden);
   let state = $state('connecting');
   let error = $state('');
+  let playbackBlocked = $state(false);
+  let playbackError = $state('');
   let metrics = $state<WebRtcMetrics | null>(null);
   let flowEnabled = $state(false);
   let flowResult = $state<OpticalFlowResult | null>(null);
   const flow = new OpticalFlowService();
 
+  onMount(() => {
+    const visibility = () => { hidden = document.hidden; };
+    document.addEventListener('visibilitychange', visibility);
+    visibility();
+    return () => document.removeEventListener('visibilitychange', visibility);
+  });
+
+  async function playVideo() {
+    const element = video;
+    if (!element?.srcObject) return;
+    const stream = element.srcObject;
+    try {
+      element.muted = true;
+      await element.play();
+      if (video !== element || element.srcObject !== stream) return;
+      playbackBlocked = false;
+      playbackError = '';
+    } catch (reason: unknown) {
+      if (video !== element || element.srcObject !== stream) return;
+      const name = reason && typeof reason === 'object' && 'name' in reason ? reason.name : '';
+      if (name === 'AbortError') return;
+      playbackBlocked = name === 'NotAllowedError';
+      playbackError = playbackBlocked ? '' : 'H.264 playback failed. Check that this browser has H.264 video support enabled.';
+    }
+  }
+
+  function mediaFailed() {
+    if (!video?.srcObject || !video.error || video.error.code === 1) return;
+    playbackBlocked = false;
+    playbackError = video.error.code === 3 || video.error.code === 4
+      ? 'This browser could not decode the H.264 video. Check its H.264 codec support.'
+      : 'Video playback failed. Close and reopen this camera view.';
+  }
+
   $effect(() => {
     const endpoint = offerUrl;
     const fps = targetFps;
-    if (suspended) {
+    if (suspended || hidden) {
       state = 'paused';
       metrics = null;
       error = '';
+      playbackBlocked = false;
+      playbackError = '';
       return;
     }
     let cancelled = false;
@@ -34,6 +73,8 @@
       client = current;
       metrics = null;
       error = '';
+      playbackBlocked = false;
+      playbackError = '';
       state = 'connecting';
       let failed = false;
       const failure = (reason: Error & { status?: number }) => {
@@ -48,7 +89,7 @@
         }
       };
       current.onStateChange(value => {
-        if (!cancelled && client === current) state = value;
+        if (!cancelled && client === current && !failed) state = value;
       });
       current.onMetrics(value => {
         if (!cancelled && client === current) { metrics = value; if (value.fps > 0) failures = 0; }
@@ -81,7 +122,7 @@
 </script>
 
 <div class="relative w-full h-full min-h-40 bg-black" data-camera-viewer>
-  <video bind:this={video} autoplay muted playsinline class="w-full h-full object-contain" aria-label="Rover camera feed"></video>
+  <video bind:this={video} autoplay muted playsinline onloadedmetadata={playVideo} onerror={mediaFailed} onplaying={() => { playbackBlocked = false; playbackError = ''; }} class="w-full h-full object-contain" aria-label="Rover camera feed"></video>
   <div class="absolute top-2 left-2 rounded bg-black/80 px-2 py-1 text-xs text-white pointer-events-none">
     {state === 'connected' && (metrics?.fps ?? 0) > 0 ? 'LIVE' : state === 'connected' ? 'Waiting for frames' : state}
     · H.264
@@ -98,8 +139,14 @@
       {/if}
     </div>
   {/if}
-  {#if error}
-    <div role="alert" class="absolute inset-x-2 bottom-10 rounded bg-red-950/90 p-2 text-xs text-red-100">{error}</div>
+  {#if error || playbackError}
+    <div role="alert" class="absolute inset-x-2 bottom-10 rounded bg-red-950/90 p-2 text-xs text-red-100">{error || playbackError}</div>
+  {/if}
+  {#if playbackBlocked}
+    <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 text-white">
+      <p class="text-sm">Browser blocked automatic playback.</p>
+      <button type="button" class="rounded bg-sky-600 px-4 py-2 text-sm font-medium" onclick={playVideo}>Play video</button>
+    </div>
   {/if}
   {#if diagnostics}
     <label class="absolute bottom-2 right-2 rounded bg-black/80 px-2 py-1 text-xs text-white">

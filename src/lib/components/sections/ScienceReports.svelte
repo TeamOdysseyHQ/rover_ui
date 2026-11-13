@@ -15,6 +15,7 @@
 		type ReportMetadata
 	} from '$lib/services/scienceReportService';
 	import { assignExpedition, checkExpeditionStatus } from '$lib/services/roverApi';
+	import { apiStatus, roverApiUrl } from '$lib/stores/apiStore';
 	import {
 		expeditionStore,
 		currentExpeditionId,
@@ -270,16 +271,20 @@
 		}
 	}
 
+	let reportsRead: AbortController | undefined;
 	async function loadAvailableReports() {
+		reportsRead?.abort();
+		const controller = new AbortController();
+		reportsRead = controller;
 		isLoadingReports = true;
 		try {
-			const reports = await getReportsMetadata();
-			availableReports = reports;
+			const reports = await getReportsMetadata(controller.signal);
+			if (!controller.signal.aborted) availableReports = reports;
 		} catch (error) {
 			console.error('Failed to load reports:', error);
 			setStatus('Failed to load reports', 'error');
 		} finally {
-			isLoadingReports = false;
+			if (reportsRead === controller) isLoadingReports = false;
 		}
 	}
 
@@ -329,7 +334,10 @@
 	}
 
 	$effect(() => {
-		loadAvailableReports();
+		const url = $roverApiUrl;
+		availableReports = [];
+		if ($apiStatus === 'connected') void loadAvailableReports();
+		return () => reportsRead?.abort();
 	});
 </script>
 

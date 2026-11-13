@@ -5,11 +5,11 @@ import { runInNewContext } from 'node:vm';
 import { test } from 'node:test';
 import * as api from '../src/lib/services/roverApi.js';
 const settle = () => new Promise(setImmediate);
-function slot(config, overrides = {}) {
+function slot(config, overrides = {}, duplicate = false) {
  const source = readFileSync(new URL('../src/lib/components/panels/FullscreenCameraSlot.svelte', import.meta.url), 'utf8')
   .split('<script lang="ts">')[1].split('</script>')[0].replace(/^\s*import\s[\s\S]*?from\s*['"][^'"]+['"];?/gm, '');
  const effects = [], calls = [];
- const context = { $props: () => ({ config }), $bindable: () => {}, $state: value => value,
+ const context = { $props: () => ({ config, duplicate }), $bindable: () => {}, $state: value => value,
   $effect: fn => effects.push(fn), $apiStatus: 'connected', $roverApiUrl: 'http://rover', untrack: fn => fn(), tick: async () => {},
   api: { getCameraStatus: async name => { calls.push(['status', name]); return { camera: { active: true, width: 640, height: 480, fps: 30 } }; },
    getSupportedResolutions: async () => { throw Error('Running source should not be renegotiated'); },
@@ -26,10 +26,14 @@ test('fullscreen attaches to the existing capture mode without restarting it', a
  await settle();assert.equal(s.result().ready, true);assert.equal(s.result().fps, 30);
  assert.match(s.result().modeLabel, /640 × 480/);assert.deepEqual(s.calls, [['status', 'kreo']]);s.cleanup();
 });
-test('fullscreen uses the configured ROS topic for subscription and offer', async () => {
+test('fullscreen leaves ROS subscription ownership to its video offer', async () => {
  const s = slot({ cameraId: 'ros', isConfigured: true, topicName: '/custom/image raw' });
- await settle();assert.equal(s.result().ready, true);assert.deepEqual(s.calls, [['subscribe', '/custom/image raw']]);
+ await settle();assert.equal(s.result().ready, true);assert.deepEqual(s.calls, []);
  assert.equal(new URL(s.result().offerUrl).searchParams.get('topic_name'), '/custom/image raw');s.cleanup();
+});
+test('a duplicate fullscreen slot never requests or starts another stream', async () => {
+ const s = slot({ cameraId: 'kreo', isConfigured: true }, {}, true);
+ await settle();assert.equal(s.result().ready, false);assert.match(s.result().error,/already shown/);assert.deepEqual(s.calls,[]);s.cleanup();
 });
 test('closing a fullscreen slot during status discovery cannot start a camera', async () => {
  let resolve;

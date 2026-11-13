@@ -12,6 +12,12 @@ npm ci
 npm run dev
 ```
 
+With the saved **Rover antenna** Ethernet profile, open
+`http://192.168.1.159:5173/`. On this workstation, Firefox selects Wi-Fi for
+receive-only WebRTC when the page uses `localhost`. The Ethernet URL selects
+the rover-facing interface while Wi-Fi continues to provide internet access.
+This URL works with `npm run dev`; no global Firefox settings are required.
+
 ## Connect to the rover
 
 Click **Connect** at the top right to connect the rover API and ROS bridge.
@@ -140,6 +146,9 @@ Fullscreen pauses the background players and attaches to an already running
 camera at its current capture mode. Exiting reconnects the normal player.
 Closing a slot releases only its viewer, including an offer that finishes after
 the slot closes. Stop the camera before changing a mode shared by other viewers.
+Hidden tabs release their video peers and reconnect when visible. Fullscreen
+allows one slot per camera or ROS topic. Cameras with no viewers pause capture
+after about 10–15 seconds and resume when a viewer returns.
 Microscope and ROS camera panels use the same H.264 player. ROS slots use their
 configured topic, and disconnecting a ROS player releases only its own peer.
 

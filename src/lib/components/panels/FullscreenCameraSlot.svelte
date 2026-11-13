@@ -4,7 +4,7 @@
   import { apiStatus, roverApiUrl } from '$lib/stores/apiStore';
   import * as api from '$lib/services/roverApi';
   import { selectCameraMode, selectCameraResolution } from '$lib/services/cameraStreamProfile.js';
-  let { config = $bindable(), availableCameras = [] } = $props();
+  let { config = $bindable(), availableCameras = [], duplicate = false } = $props();
   let selectedCamera = $state(config.cameraId ?? config.cameraName ?? '');
   let resolution = $state(config.resolution ?? '720p');
   let topicName = $state(config.topicName ?? '/camera/camera/color/image_raw');
@@ -17,18 +17,17 @@
     const configured = config.isConfigured;
     const name = config.cameraId ?? config.cameraName;
     const size = config.resolution ?? '720p';
-    const topic = config.topicName ?? '/camera/camera/color/image_raw';
+    const topic = config.topicName || '/camera/camera/color/image_raw';
     const connected = $apiStatus === 'connected';
+    const alreadyShown = duplicate;
     const baseUrl = $roverApiUrl;
     let cancelled = false;
     untrack(() => { ready = false; error = ''; });
     async function start() {
       if (!configured || !name || !connected) return;
+      if (alreadyShown) { error = 'This camera or topic is already shown in another slot.'; return; }
       try {
         if (name === 'ros') {
-          const subscribed = await api.subscribeToRosCamera(topic);
-          if (!subscribed.success) throw new Error(subscribed.message ?? 'ROS camera unavailable');
-          if (cancelled) return;
           fps = 60;
           modeLabel = topic;
           offerUrl = `${baseUrl}/api/nav/ros/camera/webrtc/offer?topic_name=${encodeURIComponent(topic)}`;

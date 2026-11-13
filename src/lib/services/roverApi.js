@@ -6,13 +6,29 @@
 // Shared by the request service, connection store, and connection form.
 export const DEFAULT_API_URL = import.meta.env?.VITE_ROVER_API_URL || 'http://192.168.1.3:6767';
 let API_BASE_URL = DEFAULT_API_URL;
+let reportRequests = new AbortController();
 
 export function setApiBaseUrl(url) {
+    cancelReportRequests();
     API_BASE_URL = url.trim().replace(/\/+$/, '');
+}
+
+export function cancelReportRequests() {
+    reportRequests.abort();
+    reportRequests = new AbortController();
 }
 
 export function getApiBaseUrl() {
     return API_BASE_URL;
+}
+
+// Reports need the raw response for both JSON and file downloads.
+export function fetchReport(endpoint, options = {}) {
+    const { timeoutMs = 10000, signal, ...request } = options;
+    return fetch(`${API_BASE_URL}${endpoint}`, {
+        ...request,
+        signal: AbortSignal.any([reportRequests.signal, AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])])
+    });
 }
 
 /**

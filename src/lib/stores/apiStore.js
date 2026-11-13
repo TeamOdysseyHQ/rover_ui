@@ -86,6 +86,7 @@ if (typeof window !== "undefined") {
 
 // Disconnect from rover
 export function disconnectFromRover() {
+    roverApi.cancelReportRequests();
     autoConnectAttempted = true;
     connectionAttempt++;
     connectionController?.abort();
